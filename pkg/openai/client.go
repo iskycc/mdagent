@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -15,6 +17,7 @@ type Client struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	debug      bool
 }
 
 // NewClient 创建客户端
@@ -26,12 +29,18 @@ func NewClient(apiKey, baseURL string) *Client {
 		apiKey:     apiKey,
 		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		debug:      getDebugFromEnv(),
 	}
 }
 
 // SetTimeout 设置请求超时
 func (c *Client) SetTimeout(timeout time.Duration) {
 	c.httpClient.Timeout = timeout
+}
+
+// SetDebug 设置是否打印请求与错误响应日志。
+func (c *Client) SetDebug(debug bool) {
+	c.debug = debug
 }
 
 // ChatMessage 表示一条消息
@@ -113,6 +122,9 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 	}
 
 	url := c.baseURL + "/chat/completions"
+	if c.debug {
+		log.Printf("openai request url=%s body=%s", url, string(body))
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request failed: %w", err)
@@ -122,6 +134,9 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		if c.debug {
+			log.Printf("openai request failed url=%s error=%v", url, err)
+		}
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -132,6 +147,9 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if c.debug {
+			log.Printf("openai error response status=%d body=%s", resp.StatusCode, string(respBody))
+		}
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -140,7 +158,19 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
 	if result.Error != nil {
+		if c.debug {
+			log.Printf("openai api error code=%s type=%s message=%s", result.Error.Code, result.Error.Type, result.Error.Message)
+		}
 		return nil, fmt.Errorf("openai error: %s", result.Error.Message)
 	}
 	return &result, nil
+}
+
+func getDebugFromEnv() bool {
+	switch os.Getenv("OPENAI_DEBUG") {
+	case "1", "true", "TRUE", "yes", "YES", "on", "ON":
+		return true
+	default:
+		return false
+	}
 }

@@ -24,6 +24,7 @@
 | `OPENAI_MODEL` | 模型名 | `deepseek-chat` |
 | `OPENAI_MODEL_MAX_TOKENS` | 模型上下文窗口大小，用于裁剪历史避免溢出 | `8192` |
 | `OPENAI_MAX_OUTPUT_TOKENS` | 单次模型最大输出 token 数 | `1024` |
+| `OPENAI_DEBUG` | 打印模型请求体和错误响应，排查模型兼容问题时使用 | `false` |
 | `CALLBACK_PATH` | 传送鸽回调路径 | `/callback` |
 
 ## 启动
@@ -116,6 +117,14 @@ GET /api/stats
 Bot 会通过 tool-call 自动调用合适的工具完成操作。
 
 为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、设置路径、保存文本/图片、查询最近或指定日期记录），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 自动裁剪旧会话历史，降低 token 溢出概率。
+
+排查模型兼容问题时可以临时开启：
+
+```bash
+OPENAI_DEBUG=true
+```
+
+开启后日志会打印模型请求 URL、请求体、错误状态码和错误响应体。请求体可能包含用户消息内容，生产环境排查完成后应关闭。
 
 ## 图片处理说明
 

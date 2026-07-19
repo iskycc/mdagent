@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -128,6 +129,28 @@ func TestSetTimeout(t *testing.T) {
 	client.SetTimeout(5 * time.Second)
 	if client.httpClient.Timeout != 5*time.Second {
 		t.Errorf("unexpected timeout: %v", client.httpClient.Timeout)
+	}
+}
+
+func TestSetDebug(t *testing.T) {
+	client := NewClient("key", "")
+	client.SetDebug(true)
+	if !client.debug {
+		t.Fatal("expected debug enabled")
+	}
+	client.SetDebug(false)
+	if client.debug {
+		t.Fatal("expected debug disabled")
+	}
+}
+
+func TestNewClient_DebugFromEnv(t *testing.T) {
+	os.Setenv("OPENAI_DEBUG", "true")
+	defer os.Unsetenv("OPENAI_DEBUG")
+
+	client := NewClient("key", "")
+	if !client.debug {
+		t.Fatal("expected debug enabled from env")
 	}
 }
 
