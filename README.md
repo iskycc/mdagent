@@ -43,18 +43,21 @@ export OPENAI_MAX_OUTPUT_TOKENS=1024
 ./miaodi-agent
 ```
 
-也可以通过 Docker Compose 启动应用和本地 MySQL：
+也可以通过 Docker Compose 启动应用。Compose 只启动 Agent 容器，MySQL 使用 `.env` 中配置的远程数据库：
 
 ```bash
 cp .env.example .env
-docker compose up -d --build
+docker compose pull
+docker compose up -d --remove-orphans
 ```
 
 如果宿主机 `8080` 已被占用，可以临时指定其他端口：
 
 ```bash
-HOST_PORT=18080 docker compose up -d --build
+HOST_PORT=18080 docker compose up -d --remove-orphans
 ```
+
+当前服务没有 Redis 依赖：用户状态、会话历史、图片待上传队列和统计日志都写入 MySQL。之前 Compose 里的 Redis 是历史遗留配置，代码没有读写 Redis，所以已移除，避免启动无效组件。
 
 服务启动时会自动建表：
 
