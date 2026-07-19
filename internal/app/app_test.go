@@ -20,6 +20,7 @@ func TestRun_StartAndShutdown(t *testing.T) {
 
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users MODIFY COLUMN status").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE agent_users").WithArgs(repository.DefaultBook, repository.DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_conversations").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS pending_images").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -61,6 +62,7 @@ func TestRun_ReturnsListenError(t *testing.T) {
 
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users MODIFY COLUMN status").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE agent_users").WithArgs(repository.DefaultBook, repository.DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_conversations").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS pending_images").WillReturnResult(sqlmock.NewResult(0, 0))

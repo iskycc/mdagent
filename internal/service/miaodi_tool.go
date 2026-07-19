@@ -351,7 +351,8 @@ func (e *ToolExecutor) sendMiaodiEmailCode(user *model.User, channelUserID, argu
 		return fmt.Sprintf("邮件发送失败：%s", miaodiMessage(res))
 	}
 	if err := e.userRepo.UpdateEmailAndStatus(channelUserID, args.Email, userStatusWaitingEmailCode); err != nil {
-		return "邮件已发送，但保存绑定状态失败：数据库错误"
+		debuglog.Printf("send email state update failed user=%s email=%s status=%s error=%v", channelUserID, args.Email, userStatusWaitingEmailCode, err)
+		return "邮件已发送，但保存绑定状态失败，请稍后重试"
 	}
 	user.Email = args.Email
 	user.Status = userStatusWaitingEmailCode

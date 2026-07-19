@@ -26,7 +26,7 @@ func (r *UserRepo) EnsureTable() error {
 		CREATE TABLE IF NOT EXISTS agent_users (
 			channel_user_id VARCHAR(128) PRIMARY KEY,
 			apikey VARCHAR(128) DEFAULT '',
-			status VARCHAR(16) DEFAULT 'unbound',
+			status VARCHAR(32) DEFAULT 'unbound',
 			book VARCHAR(64) DEFAULT '传送鸽',
 			chara VARCHAR(64) DEFAULT '喵滴鸽',
 			title VARCHAR(128) DEFAULT '',
@@ -39,6 +39,9 @@ func (r *UserRepo) EnsureTable() error {
 		return err
 	}
 	if err := r.ensureEmailColumn(); err != nil {
+		return err
+	}
+	if err := r.ensureStatusColumn(); err != nil {
 		return err
 	}
 	return r.migrateLegacyDefaults()
@@ -156,5 +159,10 @@ func (r *UserRepo) ensureEmailColumn() error {
 	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1060 {
 		return nil
 	}
+	return err
+}
+
+func (r *UserRepo) ensureStatusColumn() error {
+	_, err := r.db.Exec(`ALTER TABLE agent_users MODIFY COLUMN status VARCHAR(32) DEFAULT 'unbound'`)
 	return err
 }

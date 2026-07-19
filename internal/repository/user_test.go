@@ -22,6 +22,7 @@ func TestUserRepo_EnsureTable(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users MODIFY COLUMN status").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := r.EnsureTable(); err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -32,6 +33,7 @@ func TestUserRepo_EnsureTable_MigrateError(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users MODIFY COLUMN status").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnError(sqlmock.ErrCancelled)
 	if err := r.EnsureTable(); err == nil {
 		t.Fatal("expected error")
@@ -42,9 +44,20 @@ func TestUserRepo_EnsureTable_EmailColumnAlreadyExists(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnError(&mysql.MySQLError{Number: 1060, Message: "duplicate column"})
+	mock.ExpectExec("ALTER TABLE agent_users MODIFY COLUMN status").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := r.EnsureTable(); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestUserRepo_EnsureTable_StatusAlterError(t *testing.T) {
+	r, mock := newUserRepoMock(t)
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users MODIFY COLUMN status").WillReturnError(sqlmock.ErrCancelled)
+	if err := r.EnsureTable(); err == nil {
+		t.Fatal("expected error")
 	}
 }
 
