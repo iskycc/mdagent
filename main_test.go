@@ -10,6 +10,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 
 	"miaodi-agent/internal/config"
+	"miaodi-agent/internal/repository"
 )
 
 func TestRun_ConfigValidationError(t *testing.T) {
@@ -39,19 +40,20 @@ func TestRun_Success(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE agent_users").WithArgs(repository.DefaultBook, repository.DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_conversations").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS pending_images").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS api_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	cfg := &config.Config{
-		Port:          "0",
-		DBUser:        "u",
-		DBName:        "n",
-		CallbackPath:  "/callback",
-		OpenAIAPIKey:  "test",
-		OpenAIBaseURL: "http://localhost",
-		OpenAIModel:   "test-model",
-		ModelMaxTokens: 8192,
+		Port:            "0",
+		DBUser:          "u",
+		DBName:          "n",
+		CallbackPath:    "/callback",
+		OpenAIAPIKey:    "test",
+		OpenAIBaseURL:   "http://localhost",
+		OpenAIModel:     "test-model",
+		ModelMaxTokens:  8192,
 		MaxOutputTokens: 1024,
 	}
 

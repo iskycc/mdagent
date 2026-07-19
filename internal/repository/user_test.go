@@ -20,8 +20,18 @@ func newUserRepoMock(t *testing.T) (*UserRepo, sqlmock.Sqlmock) {
 func TestUserRepo_EnsureTable(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := r.EnsureTable(); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestUserRepo_EnsureTable_MigrateError(t *testing.T) {
+	r, mock := newUserRepoMock(t)
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnError(sqlmock.ErrCancelled)
+	if err := r.EnsureTable(); err == nil {
+		t.Fatal("expected error")
 	}
 }
 
@@ -58,9 +68,9 @@ func TestUserRepo_GetOrCreate_Existing(t *testing.T) {
 func TestUserRepo_GetOrCreate_New(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectQuery("SELECT channel_user_id").WithArgs("u1").WillReturnError(sql.ErrNoRows)
-	mock.ExpectExec("INSERT IGNORE INTO agent_users").WithArgs("u1").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT IGNORE INTO agent_users").WithArgs("u1", DefaultBook, DefaultChara).WillReturnResult(sqlmock.NewResult(1, 1))
 	rows := sqlmock.NewRows([]string{"channel_user_id", "apikey", "status", "book", "chara", "title"}).
-		AddRow("u1", "", "unbound", "默认", "微信", "")
+		AddRow("u1", "", "unbound", DefaultBook, DefaultChara, "")
 	mock.ExpectQuery("SELECT channel_user_id").WithArgs("u1").WillReturnRows(rows)
 
 	user, err := r.GetOrCreate("u1")
@@ -137,7 +147,7 @@ func TestUserRepo_GetOrCreate_DBError(t *testing.T) {
 func TestUserRepo_GetOrCreate_InsertError(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectQuery("SELECT channel_user_id").WithArgs("u1").WillReturnError(sql.ErrNoRows)
-	mock.ExpectExec("INSERT IGNORE INTO agent_users").WithArgs("u1").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectExec("INSERT IGNORE INTO agent_users").WithArgs("u1", DefaultBook, DefaultChara).WillReturnError(sqlmock.ErrCancelled)
 	_, err := r.GetOrCreate("u1")
 	if err == nil {
 		t.Fatal("expected error")

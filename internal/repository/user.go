@@ -25,14 +25,17 @@ func (r *UserRepo) EnsureTable() error {
 			channel_user_id VARCHAR(128) PRIMARY KEY,
 			apikey VARCHAR(128) DEFAULT '',
 			status VARCHAR(16) DEFAULT 'unbound',
-			book VARCHAR(64) DEFAULT '默认',
-			chara VARCHAR(64) DEFAULT '微信',
+			book VARCHAR(64) DEFAULT '传送鸽',
+			chara VARCHAR(64) DEFAULT '喵滴鸽',
 			title VARCHAR(128) DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.migrateLegacyDefaults()
 }
 
 // GetOrCreate 根据 channel_user_id 查询用户，不存在则创建（并发安全）
@@ -47,7 +50,7 @@ func (r *UserRepo) GetOrCreate(channelUserID string) (*model.User, error) {
 	// INSERT IGNORE 可容忍并发同时插入导致的重复主键
 	_, err = r.db.Exec(`
 		INSERT IGNORE INTO agent_users(channel_user_id, apikey, status, book, chara, title)
-		VALUES (?, '', 'unbound', '默认', '微信', '')`, channelUserID)
+		VALUES (?, '', 'unbound', ?, ?, '')`, channelUserID, DefaultBook, DefaultChara)
 	if err != nil {
 		return nil, fmt.Errorf("create user failed: %w", err)
 	}
@@ -109,5 +112,14 @@ func (r *UserRepo) UpdateSavePath(channelUserID, book, chara, title string) erro
 	_, err := r.db.Exec(`
 		UPDATE agent_users SET book = ?, chara = ?, title = ? WHERE channel_user_id = ?`,
 		book, chara, title, channelUserID)
+	return err
+}
+
+func (r *UserRepo) migrateLegacyDefaults() error {
+	_, err := r.db.Exec(`
+		UPDATE agent_users
+		SET book = ?, chara = ?
+		WHERE book = '默认' AND chara = '微信' AND title = ''`,
+		DefaultBook, DefaultChara)
 	return err
 }

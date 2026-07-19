@@ -68,6 +68,8 @@ HOST_PORT=18080 docker compose up -d --remove-orphans
 - `pending_images`
 - `api_call_log`
 
+新用户默认保存路径为：书本《传送鸽》/ 章节《喵滴鸽》，标题默认使用当天日期。
+
 ## 对接 传送鸽
 
 1. 在 传送鸽 开发者后台注册一个 bot，把 `callbackUrl` 填为 `http://<你的域名>/callback`。
