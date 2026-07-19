@@ -80,6 +80,9 @@ func (r *IntentRouter) Route(user *model.User, channelUserID string, conversatio
 	if args, ok := parseTextStatsIntent(text, normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "text_stats", toJSONString(args)), true
 	}
+	if args, ok := parseTokenCountIntent(text, normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "count_tokens", toJSONString(args)), true
+	}
 	if args, ok := parseBindIntent(text, normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "bind_miaodi_key", toJSONString(args)), true
 	}
@@ -328,6 +331,26 @@ func parseTextStatsIntent(original, normalized string) (map[string]string, bool)
 		return nil, false
 	}
 	if text == "" {
+		return nil, false
+	}
+	return map[string]string{"text": text}, true
+}
+
+func parseTokenCountIntent(original, normalized string) (map[string]string, bool) {
+	if !(strings.Contains(normalized, "token") || strings.Contains(normalized, "tokens")) {
+		return nil, false
+	}
+	if !(strings.Contains(normalized, "计算") || strings.Contains(normalized, "统计") || strings.Contains(normalized, "多少")) {
+		return nil, false
+	}
+	text := original
+	for _, sep := range []string{"：", ":"} {
+		if idx := strings.Index(text, sep); idx >= 0 {
+			text = strings.TrimSpace(text[idx+len(sep):])
+			break
+		}
+	}
+	if text == original || text == "" {
 		return nil, false
 	}
 	return map[string]string{"text": text}, true

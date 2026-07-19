@@ -315,6 +315,8 @@ func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversat
 		result = e.chooseOption(arguments)
 	case "text_stats":
 		result = e.textStats(arguments)
+	case "count_tokens":
+		result = e.countTokens(arguments)
 	default:
 		result = fmt.Sprintf("未知工具: %s", name)
 	}
@@ -569,6 +571,7 @@ func (e *ToolExecutor) showHelp() string {
 - 按日期查询笔记
 - 查询当前准确时间、日期和星期
 - 做基础计算、日期推算、随机数、随机选择和文本统计
+- 计算文本 token 数
 - 清空当前会话
 
 绑定方式：

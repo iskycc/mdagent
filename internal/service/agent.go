@@ -118,7 +118,7 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 
 		req := openai.ChatCompletionRequest{
 			Model:      a.model,
-			Messages:   FitMessagesForTokenBudget(messages, tools, a.modelMaxTokens, a.maxOutputTokens),
+			Messages:   FitMessagesForTokenBudgetForModel(a.model, messages, tools, a.modelMaxTokens, a.maxOutputTokens),
 			Tools:      tools,
 			ToolChoice: "auto",
 			MaxTokens:  a.maxOutputTokens,
@@ -129,7 +129,7 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 			a.model,
 			len(messages),
 			len(req.Messages),
-			estimateBlockTokens(req.Messages)+estimateToolsTokens(tools),
+			newTokenCounter(a.model).MessagesTokens(req.Messages)+newTokenCounter(a.model).ToolsTokens(tools),
 			a.maxOutputTokens,
 		)
 
@@ -247,7 +247,8 @@ func buildSystemPrompt(user *model.User) string {
 - 随机数 -> random_number
 - 随机选择/帮我选 -> choose_option
 - 统计字数/文本长度 -> text_stats
+- 计算 token 数/上下文长度 -> count_tokens
 
-未绑定时，保存类请求先提示绑定。最终回复简洁自然，200 字以内。`,
+未绑定时，保存类请求先提示绑定。最终回复简洁自然，200 字以内。历史上下文只包含 24 小时内记录。`,
 		status, user.Book, user.Chara, title, timeutil.Date())
 }

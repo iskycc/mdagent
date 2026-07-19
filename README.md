@@ -122,6 +122,7 @@ GET /api/stats
 - `random_number(min?, max?)`：生成随机整数。
 - `choose_option(options)`：从候选项中随机选择一个。
 - `text_stats(text)`：统计文本字符数、字节数、行数和粗略词数。
+- `count_tokens(text, model?)`：使用 tiktoken 计算文本 token 数。
 
 你可以直接用自然语言与 Bot 交流，例如：
 
@@ -141,10 +142,11 @@ GET /api/stats
 - "1 到 100 随机一个数"
 - "帮我选 A 还是 B"
 - "统计字数：这是一段文本"
+- "计算 token：这是一段文本"
 
 Bot 会通过 tool-call 自动调用合适的工具完成操作。
 
-为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、邮箱验证码绑定、解绑、年度报告、查看 Key、设置路径、保存文本/图片、查询最近或指定日期记录、当前时间、基础计算、日期推算、随机数、随机选择和文本统计），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 自动裁剪旧会话历史，降低 token 溢出概率。
+为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、邮箱验证码绑定、解绑、年度报告、查看 Key、设置路径、保存文本/图片、查询最近或指定日期记录、当前时间、基础计算、日期推算、随机数、随机选择、文本统计和 token 统计），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会使用 `tiktoken-go` 根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 计算并裁剪旧会话历史，降低 token 溢出概率。历史消息不再按条数截断，只保留 24 小时内记录；超过 24 小时的消息由后台定时任务按北京时间清理。
 
 排查真机问题时可以临时开启应用层调试日志：
 

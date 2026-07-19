@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"miaodi-agent/internal/config"
+	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/handler"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/internal/service"
+	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/client"
 	"miaodi-agent/pkg/openai"
 )
@@ -30,6 +32,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	convRepo := repository.NewConversationRepo(db)
 	pendingRepo := repository.NewPendingImageRepo(db)
 	callLogRepo := repository.NewCallLogRepo(db)
+	startConversationCleanup(ctx, convRepo)
 
 	toolExec := service.NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, callLogRepo)
 	agent := service.NewAgentWithOptions(llm, cfg.OpenAIModel, userRepo, convRepo, toolExec, service.AgentOptions{
@@ -74,6 +77,29 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	}
 	log.Println("server exited")
 	return nil
+}
+
+func startConversationCleanup(ctx context.Context, convRepo *repository.ConversationRepo) {
+	ticker := time.NewTicker(time.Hour)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				removed, err := convRepo.CleanupExpiredMessages(timeutil.Now().Add(-24 * time.Hour))
+				if err != nil {
+					log.Printf("cleanup expired conversation messages failed: %v", err)
+					debuglog.Printf("cleanup expired conversation messages failed error=%v", err)
+					continue
+				}
+				if removed > 0 {
+					debuglog.Printf("cleanup expired conversation messages removed=%d", removed)
+				}
+			}
+		}
+	}()
 }
 
 func initRepos(db *sql.DB) error {

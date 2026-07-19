@@ -63,12 +63,20 @@ func TestToolExecutor_textStats(t *testing.T) {
 	}
 }
 
+func TestToolExecutor_countTokens(t *testing.T) {
+	exec, _ := newToolExecutorMock(t)
+	res := exec.Execute(&model.User{}, "u1", 1, "count_tokens", `{"text":"hello world"}`)
+	if !strings.Contains(res, "Token 统计：") || !strings.Contains(res, "cl100k_base") {
+		t.Fatalf("unexpected result: %s", res)
+	}
+}
+
 func TestCommonToolDefinitions(t *testing.T) {
 	names := map[string]bool{}
 	for _, tool := range ToolDefinitions() {
 		names[tool.Function.Name] = true
 	}
-	for _, name := range []string{"get_current_time", "calculate", "date_calculate", "random_number", "choose_option", "text_stats"} {
+	for _, name := range []string{"get_current_time", "calculate", "date_calculate", "random_number", "choose_option", "text_stats", "count_tokens"} {
 		if !names[name] {
 			t.Fatalf("missing tool definition: %s", name)
 		}

@@ -36,6 +36,7 @@ func TestIntentRouter_Route(t *testing.T) {
 		{name: "random number", text: "1到10随机数", wantTool: "random_number"},
 		{name: "choose option", text: "帮我选 A 还是 B", wantTool: "choose_option"},
 		{name: "text stats", text: "统计字数：你好 world", wantTool: "text_stats"},
+		{name: "count tokens", text: "计算token：hello world", wantTool: "count_tokens"},
 	}
 
 	for _, tt := range tests {
@@ -213,6 +214,7 @@ func TestIntentRouter_CommonToolArgs(t *testing.T) {
 		{name: "random", text: "10到20随机数", want: `"max":20`},
 		{name: "choose", text: "帮我选 A 还是 B", want: `"options":["A","B"]`},
 		{name: "text stats", text: "统计字数：你好 world", want: `"text":"你好 world"`},
+		{name: "tokens", text: "计算token：hello world", want: `"text":"hello world"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

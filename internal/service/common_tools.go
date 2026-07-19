@@ -126,6 +126,27 @@ func commonToolDefinitions() []openai.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "count_tokens",
+				Description: "计算文本的 token 数。用户询问 token 数、上下文长度、这段话多少 token 时调用。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"text": map[string]interface{}{
+							"type":        "string",
+							"description": "要计算 token 的文本",
+						},
+						"model": map[string]interface{}{
+							"type":        "string",
+							"description": "可选模型名；未知模型会回退到 cl100k_base",
+						},
+					},
+					"required": []string{"text"},
+				},
+			},
+		},
 	}
 }
 
@@ -240,6 +261,26 @@ func (e *ToolExecutor) textStats(arguments string) string {
 	}
 	return fmt.Sprintf("文本统计：字符数 %d，字节数 %d，行数 %d，粗略词数 %d",
 		runes, len(args.Text), lines, countWords(args.Text))
+}
+
+func (e *ToolExecutor) countTokens(arguments string) string {
+	var args struct {
+		Text  string `json:"text"`
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	if args.Text == "" {
+		return "text 不能为空"
+	}
+	model := strings.TrimSpace(args.Model)
+	if model == "" {
+		model = "cl100k_base"
+	}
+	tokenizer := newTokenCounter(model)
+	tokens := tokenizer.TextTokens(args.Text)
+	return fmt.Sprintf("Token 统计：%d tokens（模型/编码：%s）", tokens, tokenizer.EncodingLabel())
 }
 
 func parseToolLocation(name string) (*time.Location, string, error) {

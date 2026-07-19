@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 
@@ -14,13 +15,12 @@ import (
 
 // ConversationRepo 会话数据访问层
 type ConversationRepo struct {
-	db     *sql.DB
-	maxLen int
+	db *sql.DB
 }
 
 // NewConversationRepo 创建会话仓库
 func NewConversationRepo(db *sql.DB) *ConversationRepo {
-	return &ConversationRepo{db: db, maxLen: 20}
+	return &ConversationRepo{db: db}
 }
 
 // EnsureTable 确保 agent_conversations 表存在
@@ -56,21 +56,22 @@ func (r *ConversationRepo) Clear(channelUserID string, conversationID int64) err
 // GetMessages 获取会话历史（不加锁，用于读取）
 func (r *ConversationRepo) GetMessages(channelUserID string, conversationID int64) ([]openai.ChatMessage, error) {
 	row := r.db.QueryRow(`
-		SELECT messages FROM agent_conversations
+		SELECT messages, updated_at FROM agent_conversations
 		WHERE channel_user_id = ? AND conversation_id = ?`, channelUserID, conversationID)
 	var raw []byte
-	err := row.Scan(&raw)
+	var updatedAt time.Time
+	err := row.Scan(&raw, &updatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return []openai.ChatMessage{}, nil
 		}
 		return nil, err
 	}
-	var messages []openai.ChatMessage
-	if err := json.Unmarshal(raw, &messages); err != nil {
+	stored, err := decodeStoredMessages(raw, updatedAt)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshal messages failed: %w", err)
 	}
-	return messages, nil
+	return storedToChatMessages(pruneStoredMessages(stored, historyCutoff())), nil
 }
 
 // AppendMessage 追加一条消息（原子、并发安全）
@@ -107,28 +108,29 @@ func (r *ConversationRepo) appendMessagesTx(channelUserID string, conversationID
 	defer tx.Rollback()
 
 	var raw []byte
+	var updatedAt time.Time
 	err = tx.QueryRow(`
-		SELECT messages FROM agent_conversations
+		SELECT messages, updated_at FROM agent_conversations
 		WHERE channel_user_id = ? AND conversation_id = ? FOR UPDATE`,
-		channelUserID, conversationID).Scan(&raw)
+		channelUserID, conversationID).Scan(&raw, &updatedAt)
 
-	var messages []openai.ChatMessage
+	var messages []storedChatMessage
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		// 记录不存在，从头开始
-		messages = []openai.ChatMessage{}
+		messages = []storedChatMessage{}
 	} else {
-		if err := json.Unmarshal(raw, &messages); err != nil {
+		decoded, err := decodeStoredMessages(raw, updatedAt)
+		if err != nil {
 			return fmt.Errorf("unmarshal messages failed: %w", err)
 		}
+		messages = decoded
 	}
 
-	messages = append(messages, msgs...)
-	if len(messages) > r.maxLen {
-		messages = messages[len(messages)-r.maxLen:]
-	}
+	messages = append(messages, chatMessagesToStored(msgs, timeutil.Now())...)
+	messages = pruneStoredMessages(messages, historyCutoff())
 	newRaw, err := json.Marshal(messages)
 	if err != nil {
 		return err
@@ -143,4 +145,136 @@ func (r *ConversationRepo) appendMessagesTx(channelUserID string, conversationID
 		return err
 	}
 	return tx.Commit()
+}
+
+// CleanupExpiredMessages 删除 24 小时窗口外的历史消息。
+func (r *ConversationRepo) CleanupExpiredMessages(cutoff time.Time) (int, error) {
+	rows, err := r.db.Query(`
+		SELECT channel_user_id, conversation_id, messages, updated_at
+		FROM agent_conversations`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type conversationRow struct {
+		channelUserID  string
+		conversationID int64
+		raw            []byte
+		updatedAt      time.Time
+	}
+	conversations := make([]conversationRow, 0)
+	for rows.Next() {
+		var row conversationRow
+		if err := rows.Scan(&row.channelUserID, &row.conversationID, &row.raw, &row.updatedAt); err != nil {
+			return 0, err
+		}
+		conversations = append(conversations, row)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	removed := 0
+	for _, row := range conversations {
+		stored, err := decodeStoredMessages(row.raw, row.updatedAt)
+		if err != nil {
+			return removed, fmt.Errorf("decode conversation %s/%d failed: %w", row.channelUserID, row.conversationID, err)
+		}
+		pruned := pruneStoredMessages(stored, cutoff)
+		if len(pruned) == len(stored) {
+			continue
+		}
+		removed += len(stored) - len(pruned)
+		if len(pruned) == 0 {
+			if _, err := r.db.Exec(`
+				DELETE FROM agent_conversations
+				WHERE channel_user_id = ? AND conversation_id = ?`,
+				row.channelUserID, row.conversationID); err != nil {
+				return removed, err
+			}
+			continue
+		}
+		newRaw, err := json.Marshal(pruned)
+		if err != nil {
+			return removed, err
+		}
+		if _, err := r.db.Exec(`
+			UPDATE agent_conversations
+			SET messages = ?, updated_at = ?
+			WHERE channel_user_id = ? AND conversation_id = ?`,
+			string(newRaw), timeutil.Now(), row.channelUserID, row.conversationID); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+type storedChatMessage struct {
+	openai.ChatMessage
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func decodeStoredMessages(raw []byte, fallbackTime time.Time) ([]storedChatMessage, error) {
+	var stored []storedChatMessage
+	if err := json.Unmarshal(raw, &stored); err == nil && storedMessagesHavePayload(stored) {
+		for i := range stored {
+			if stored[i].CreatedAt.IsZero() {
+				stored[i].CreatedAt = fallbackTime
+			}
+		}
+		return stored, nil
+	}
+
+	var legacy []openai.ChatMessage
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return nil, err
+	}
+	return chatMessagesToStored(legacy, fallbackTime), nil
+}
+
+func storedMessagesHavePayload(messages []storedChatMessage) bool {
+	if len(messages) == 0 {
+		return true
+	}
+	for _, msg := range messages {
+		if msg.Role != "" || msg.Content != "" || len(msg.ToolCalls) > 0 || msg.ToolCallID != "" || msg.Name != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func chatMessagesToStored(messages []openai.ChatMessage, createdAt time.Time) []storedChatMessage {
+	stored := make([]storedChatMessage, 0, len(messages))
+	for _, msg := range messages {
+		stored = append(stored, storedChatMessage{
+			ChatMessage: msg,
+			CreatedAt:   createdAt.In(timeutil.BeijingLocation()),
+		})
+	}
+	return stored
+}
+
+func storedToChatMessages(stored []storedChatMessage) []openai.ChatMessage {
+	messages := make([]openai.ChatMessage, 0, len(stored))
+	for _, msg := range stored {
+		messages = append(messages, msg.ChatMessage)
+	}
+	return messages
+}
+
+func pruneStoredMessages(messages []storedChatMessage, cutoff time.Time) []storedChatMessage {
+	cutoff = cutoff.In(timeutil.BeijingLocation())
+	pruned := make([]storedChatMessage, 0, len(messages))
+	for _, msg := range messages {
+		if msg.CreatedAt.IsZero() || !msg.CreatedAt.Before(cutoff) {
+			pruned = append(pruned, msg)
+		}
+	}
+	return pruned
+}
+
+func historyCutoff() time.Time {
+	return timeutil.Now().Add(-24 * time.Hour)
 }
