@@ -20,6 +20,7 @@ func (f *fakeAgent) ProcessMessage(ctx context.Context, payload *model.CallbackP
 }
 
 func TestHandleCallback_UserMessage(t *testing.T) {
+	t.Setenv("APP_DEBUG", "true")
 	agent := &fakeAgent{reply: "收到，已保存"}
 	h := NewCallbackHandler(agent)
 	mux := http.NewServeMux()

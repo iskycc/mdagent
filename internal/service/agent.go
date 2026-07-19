@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/pkg/openai"
 )
@@ -70,28 +71,36 @@ func NewAgentWithOptions(llm LLMClient, modelName string, userRepo UserStore, co
 func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPayload) string {
 	channelUserID := payload.User.UserID
 	conversationID := payload.Conversation.ID
+	debuglog.Printf("agent process start user=%s conversation=%d message_id=%d content=%q", channelUserID, conversationID, payload.Message.ID, payload.Message.Content)
 
 	user, err := a.userRepo.GetOrCreate(channelUserID)
 	if err != nil {
 		log.Printf("get or create user failed: %v", err)
-		return "系统内部错误，请稍后再试"
+		return a.debugReturn("agent user load failed", "系统内部错误，请稍后再试")
 	}
+	debuglog.Printf("agent user loaded user=%s status=%s book=%q chapter=%q title=%q", channelUserID, user.Status, user.Book, user.Chara, user.Title)
 
 	if reply, handled := a.intentRouter.Route(user, channelUserID, conversationID, payload.Message.Content); handled {
-		return reply
+		debuglog.Printf("agent local intent handled user=%s conversation=%d reply=%q", channelUserID, conversationID, reply)
+		return a.debugReturn("agent local intent response", reply)
 	}
 
 	// 追加用户消息到历史
 	userMsg := openai.ChatMessage{Role: "user", Content: payload.Message.Content}
 	if err := a.convRepo.AppendMessage(channelUserID, conversationID, userMsg); err != nil {
 		log.Printf("append user message failed: %v", err)
+		debuglog.Printf("agent append user message failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+	} else {
+		debuglog.Printf("agent appended user message user=%s conversation=%d", channelUserID, conversationID)
 	}
 
 	history, err := a.convRepo.GetMessages(channelUserID, conversationID)
 	if err != nil {
 		log.Printf("get messages failed: %v", err)
+		debuglog.Printf("agent get history failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
 		history = []openai.ChatMessage{}
 	}
+	debuglog.Printf("agent history loaded user=%s conversation=%d messages=%d", channelUserID, conversationID, len(history))
 
 	systemMsg := openai.ChatMessage{
 		Role:    "system",
@@ -114,28 +123,39 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 			ToolChoice: "auto",
 			MaxTokens:  a.maxOutputTokens,
 		}
+		debuglog.Printf(
+			"agent llm round=%d model=%s messages_before=%d messages_sent=%d estimated_prompt_tokens=%d max_output_tokens=%d",
+			i+1,
+			a.model,
+			len(messages),
+			len(req.Messages),
+			estimateBlockTokens(req.Messages)+estimateToolsTokens(tools),
+			a.maxOutputTokens,
+		)
 
 		resp, err := a.llm.CreateChatCompletion(ctx, req)
 		if err != nil {
 			log.Printf("llm call failed: %v", err)
-			return fmt.Sprintf("AI 调用失败：%v", err)
+			return a.debugReturn("agent llm failed", fmt.Sprintf("AI 调用失败：%v", err))
 		}
 		if len(resp.Choices) == 0 {
-			return "AI 没有返回任何内容"
+			return a.debugReturn("agent llm empty choices", "AI 没有返回任何内容")
 		}
 
 		choice := resp.Choices[0]
 		assistantMsg := choice.Message
+		debuglog.Printf("agent llm choice round=%d finish_reason=%s content=%q tool_calls=%d", i+1, choice.FinishReason, assistantMsg.Content, len(assistantMsg.ToolCalls))
 
 		if choice.FinishReason != "tool_calls" && len(assistantMsg.ToolCalls) == 0 {
 			// 最终回复
 			if err := a.convRepo.AppendMessage(channelUserID, conversationID, assistantMsg); err != nil {
 				log.Printf("append assistant message failed: %v", err)
+				debuglog.Printf("agent append assistant message failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
 			}
 			if assistantMsg.Content == "" {
-				return "收到空回复"
+				return a.debugReturn("agent empty assistant content", "收到空回复")
 			}
-			return assistantMsg.Content
+			return a.debugReturn("agent final response", assistantMsg.Content)
 		}
 
 		// 执行工具调用
@@ -143,7 +163,9 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 		resetResult := ""
 		resetDone := false
 		for _, tc := range assistantMsg.ToolCalls {
+			debuglog.Printf("agent tool call user=%s conversation=%d id=%s name=%s arguments=%s", channelUserID, conversationID, tc.ID, tc.Function.Name, tc.Function.Arguments)
 			result := a.toolExec.Execute(user, channelUserID, conversationID, tc.Function.Name, tc.Function.Arguments)
+			debuglog.Printf("agent tool result user=%s conversation=%d id=%s name=%s result=%q", channelUserID, conversationID, tc.ID, tc.Function.Name, result)
 			toolResults = append(toolResults, openai.ChatMessage{
 				Role:       "tool",
 				ToolCallID: tc.ID,
@@ -158,7 +180,7 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 		// reset_conversation 是终止操作：会话历史已被清空，
 		// 直接返回结果，不再持久化本轮消息，也不再调用 LLM。
 		if resetDone {
-			return resetResult
+			return a.debugReturn("agent reset response", resetResult)
 		}
 
 		// 把 assistant 消息和 tool 结果加入上下文
@@ -168,10 +190,18 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 		// 持久化到数据库
 		if err := a.convRepo.AppendMessages(channelUserID, conversationID, append([]openai.ChatMessage{assistantMsg}, toolResults...)...); err != nil {
 			log.Printf("append tool round messages failed: %v", err)
+			debuglog.Printf("agent append tool round failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+		} else {
+			debuglog.Printf("agent appended tool round user=%s conversation=%d messages=%d", channelUserID, conversationID, 1+len(toolResults))
 		}
 	}
 
-	return "工具调用轮数超过限制，请简化请求"
+	return a.debugReturn("agent max tool rounds exceeded", "工具调用轮数超过限制，请简化请求")
+}
+
+func (a *Agent) debugReturn(reason, reply string) string {
+	debuglog.Printf("%s reply=%q", reason, reply)
+	return reply
 }
 
 // toToolDefinitions 转换工具定义

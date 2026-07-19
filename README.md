@@ -19,6 +19,7 @@
 | `DB_NAME` | MySQL 数据库名 | `miaodi_agent` |
 | `DB_MAX_OPEN` | 最大打开连接数 | `50` |
 | `DB_MAX_IDLE` | 最大空闲连接数 | `10` |
+| `APP_DEBUG` | 打印 webhook 入参、程序回包、Agent 决策、工具调用和应用错误 | `false` |
 | `OPENAI_API_KEY` | 大模型 API Key | - |
 | `OPENAI_BASE_URL` | OpenAI 兼容 Base URL | `https://api.deepseek.com/v1` |
 | `OPENAI_MODEL` | 模型名 | `deepseek-chat` |
@@ -118,13 +119,21 @@ Bot 会通过 tool-call 自动调用合适的工具完成操作。
 
 为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、设置路径、保存文本/图片、查询最近或指定日期记录），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 自动裁剪旧会话历史，降低 token 溢出概率。
 
-排查模型兼容问题时可以临时开启：
+排查真机问题时可以临时开启应用层调试日志：
+
+```bash
+APP_DEBUG=true
+```
+
+开启后会打印 webhook 请求体、程序响应、Agent 处理流程、本地意图路由、工具调用参数、工具结果和关键错误。
+
+排查模型兼容问题时可以同时开启模型请求日志：
 
 ```bash
 OPENAI_DEBUG=true
 ```
 
-开启后日志会打印模型请求 URL、请求体、错误状态码和错误响应体。请求体可能包含用户消息内容，生产环境排查完成后应关闭。
+开启后日志会打印模型请求 URL、请求体、错误状态码和错误响应体。上述日志可能包含用户消息内容、绑定 key 或其他敏感参数，生产环境排查完成后应关闭。
 
 ## 图片处理说明
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/pkg/openai"
@@ -189,28 +190,32 @@ func ToolDefinitions() []openai.ToolDefinition {
 
 // Execute 根据工具名和参数执行，返回给模型看的结果字符串
 func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversationID int64, name string, arguments string) string {
+	debuglog.Printf("tool execute start user=%s conversation=%d name=%s arguments=%s", channelUserID, conversationID, name, arguments)
+	var result string
 	switch name {
 	case "bind_miaodi_key":
-		return e.bindMiaodiKey(user, channelUserID, arguments)
+		result = e.bindMiaodiKey(user, channelUserID, arguments)
 	case "set_save_path":
-		return e.setSavePath(user, channelUserID, arguments)
+		result = e.setSavePath(user, channelUserID, arguments)
 	case "get_user_profile":
-		return e.getUserProfile(user)
+		result = e.getUserProfile(user)
 	case "save_text_note":
-		return e.saveTextNote(user, channelUserID, arguments)
+		result = e.saveTextNote(user, channelUserID, arguments)
 	case "save_image_note":
-		return e.saveImageNote(user, channelUserID, arguments)
+		result = e.saveImageNote(user, channelUserID, arguments)
 	case "reset_conversation":
-		return e.resetConversation(user, channelUserID, conversationID, arguments)
+		result = e.resetConversation(user, channelUserID, conversationID, arguments)
 	case "show_help":
-		return e.showHelp()
+		result = e.showHelp()
 	case "list_recent_notes":
-		return e.listRecentNotes(channelUserID, arguments)
+		result = e.listRecentNotes(channelUserID, arguments)
 	case "query_notes_by_date":
-		return e.queryNotesByDate(channelUserID, arguments)
+		result = e.queryNotesByDate(channelUserID, arguments)
 	default:
-		return fmt.Sprintf("未知工具: %s", name)
+		result = fmt.Sprintf("未知工具: %s", name)
 	}
+	debuglog.Printf("tool execute result user=%s conversation=%d name=%s result=%q", channelUserID, conversationID, name, result)
+	return result
 }
 
 func (e *ToolExecutor) bindMiaodiKey(user *model.User, channelUserID, arguments string) string {

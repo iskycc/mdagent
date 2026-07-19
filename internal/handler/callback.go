@@ -3,9 +3,12 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"time"
 
+	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/model"
 )
 
@@ -31,19 +34,38 @@ func (h *CallbackHandler) RegisterRoutes(mux *http.ServeMux, callbackPath string
 }
 
 func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	debuglog.Printf("callback request method=%s path=%s remote=%s", r.Method, r.URL.Path, r.RemoteAddr)
+
 	if r.Method != http.MethodPost {
+		debuglog.Printf("callback rejected status=%d reason=method_not_allowed elapsed=%s", http.StatusMethodNotAllowed, time.Since(start))
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("read callback body failed: %v", err)
+		resp := model.NewSuccessResponse("请求读取失败")
+		debuglog.Printf("callback response status=%d body=%s elapsed=%s", http.StatusBadRequest, mustJSON(resp), time.Since(start))
+		writeJSON(w, http.StatusBadRequest, resp)
+		return
+	}
+	debuglog.Printf("callback request body=%s", string(body))
+
 	var payload model.CallbackPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeJSON(w, http.StatusBadRequest, model.NewSuccessResponse("请求格式错误"))
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("decode callback body failed: %v", err)
+		resp := model.NewSuccessResponse("请求格式错误")
+		debuglog.Printf("callback response status=%d body=%s elapsed=%s", http.StatusBadRequest, mustJSON(resp), time.Since(start))
+		writeJSON(w, http.StatusBadRequest, resp)
 		return
 	}
 
 	if payload.EventType != "user_message" {
-		writeJSON(w, http.StatusOK, model.NewSuccessResponse(""))
+		resp := model.NewSuccessResponse("")
+		debuglog.Printf("callback ignored event_type=%s response=%s elapsed=%s", payload.EventType, mustJSON(resp), time.Since(start))
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -52,7 +74,9 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 
 	reply := h.agent.ProcessMessage(ctx, &payload)
-	writeJSON(w, http.StatusOK, model.NewSuccessResponse(reply))
+	resp := model.NewSuccessResponse(reply)
+	debuglog.Printf("callback response status=%d body=%s elapsed=%s", http.StatusOK, mustJSON(resp), time.Since(start))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *CallbackHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -63,5 +87,15 @@ func (h *CallbackHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("write json response failed: %v", err)
+	}
+}
+
+func mustJSON(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "<marshal failed: " + err.Error() + ">"
+	}
+	return string(b)
 }
