@@ -241,6 +241,12 @@ func buildSystemPrompt(user *model.User) string {
 - 帮助/怎么用/能做什么 -> show_help
 - 最近保存了什么 -> list_recent_notes
 - 某日期/今天/昨天保存了什么 -> query_notes_by_date，date 用 YYYY-MM-DD
+- 当前准确时间/今天日期/星期几 -> get_current_time
+- 算术计算 -> calculate
+- 日期前后推算 -> date_calculate
+- 随机数 -> random_number
+- 随机选择/帮我选 -> choose_option
+- 统计字数/文本长度 -> text_stats
 
 未绑定时，保存类请求先提示绑定。最终回复简洁自然，200 字以内。`,
 		status, user.Book, user.Chara, title, timeutil.Date())

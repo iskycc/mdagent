@@ -116,6 +116,12 @@ GET /api/stats
 - `show_help()`：返回 Bot 能力说明。
 - `list_recent_notes(limit?)`：列出最近保存的笔记摘要。
 - `query_notes_by_date(date)`：按日期查询已保存笔记。
+- `get_current_time(timezone?)`：获取当前准确日期、时间、星期和时区。
+- `calculate(expression)`：执行基础算术计算，支持 `+ - * / %` 和括号。
+- `date_calculate(base_date?, days_delta?)`：按日期前后推算。
+- `random_number(min?, max?)`：生成随机整数。
+- `choose_option(options)`：从候选项中随机选择一个。
+- `text_stats(text)`：统计文本字符数、字节数、行数和粗略词数。
 
 你可以直接用自然语言与 Bot 交流，例如：
 
@@ -129,10 +135,16 @@ GET /api/stats
 - "帮我清空刚才的对话"
 - "最近我保存了什么？"
 - "2026-06-30 那天我保存了哪些笔记？"
+- "现在几点？"
+- "算一下 (12+8)*3"
+- "7 天后是几号？"
+- "1 到 100 随机一个数"
+- "帮我选 A 还是 B"
+- "统计字数：这是一段文本"
 
 Bot 会通过 tool-call 自动调用合适的工具完成操作。
 
-为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、邮箱验证码绑定、解绑、年度报告、查看 Key、设置路径、保存文本/图片、查询最近或指定日期记录），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 自动裁剪旧会话历史，降低 token 溢出概率。
+为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、邮箱验证码绑定、解绑、年度报告、查看 Key、设置路径、保存文本/图片、查询最近或指定日期记录、当前时间、基础计算、日期推算、随机数、随机选择和文本统计），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 自动裁剪旧会话历史，降低 token 溢出概率。
 
 排查真机问题时可以临时开启应用层调试日志：
 

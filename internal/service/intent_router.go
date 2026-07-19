@@ -15,6 +15,7 @@ var (
 	urlPattern        = regexp.MustCompile(`https?://[^\s，,。；;]+`)
 	emailPattern      = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	keyAfterPattern   = regexp.MustCompile(`(?i)(?:api\s*key|apikey|key|密钥)[：:\s]*([^\s，,。；;]+)`)
+	numberPattern     = regexp.MustCompile(`-?\d+`)
 	numberCodePattern = regexp.MustCompile(`[0-9]{4,8}`)
 	alphaCodePattern  = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 )
@@ -60,6 +61,24 @@ func (r *IntentRouter) Route(user *model.User, channelUserID string, conversatio
 	}
 	if args, ok := parseRecentNotesIntent(normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "list_recent_notes", toJSONString(args)), true
+	}
+	if args, ok := parseDateCalculateIntent(normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "date_calculate", toJSONString(args)), true
+	}
+	if isCurrentTimeIntent(normalized) {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "get_current_time", "{}"), true
+	}
+	if args, ok := parseCalculateIntent(text, normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "calculate", toJSONString(args)), true
+	}
+	if args, ok := parseRandomNumberIntent(normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "random_number", toJSONString(args)), true
+	}
+	if args, ok := parseChooseOptionIntent(text, normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "choose_option", toJSONString(args)), true
+	}
+	if args, ok := parseTextStatsIntent(text, normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "text_stats", toJSONString(args)), true
 	}
 	if args, ok := parseBindIntent(text, normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "bind_miaodi_key", toJSONString(args)), true
@@ -186,6 +205,136 @@ func parseDateQueryIntent(text string) (map[string]string, bool) {
 		return nil, false
 	}
 	return map[string]string{"date": date}, true
+}
+
+func isCurrentTimeIntent(text string) bool {
+	if len([]rune(text)) > 40 {
+		return false
+	}
+	return strings.Contains(text, "现在几点") ||
+		strings.Contains(text, "当前时间") ||
+		strings.Contains(text, "准确时间") ||
+		strings.Contains(text, "今天几号") ||
+		strings.Contains(text, "今天日期") ||
+		strings.Contains(text, "今天星期") ||
+		strings.Contains(text, "星期几")
+}
+
+func parseDateCalculateIntent(text string) (map[string]interface{}, bool) {
+	if len([]rune(text)) > 60 {
+		return nil, false
+	}
+	hasDateHint := strings.Contains(text, "几号") || strings.Contains(text, "日期") || strings.Contains(text, "星期")
+	if strings.Contains(text, "明天") && hasDateHint {
+		return map[string]interface{}{"base_date": "today", "days_delta": 1}, true
+	}
+	if strings.Contains(text, "昨天") && hasDateHint {
+		return map[string]interface{}{"base_date": "today", "days_delta": -1}, true
+	}
+	if strings.Contains(text, "大后天") {
+		return map[string]interface{}{"base_date": "today", "days_delta": 3}, true
+	}
+	if strings.Contains(text, "后天") {
+		return map[string]interface{}{"base_date": "today", "days_delta": 2}, true
+	}
+	if strings.Contains(text, "前天") {
+		return map[string]interface{}{"base_date": "today", "days_delta": -2}, true
+	}
+	matches := regexp.MustCompile(`(\d+)\s*天\s*(后|前)`).FindStringSubmatch(text)
+	if len(matches) != 3 {
+		return nil, false
+	}
+	days, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return nil, false
+	}
+	if matches[2] == "前" {
+		days = -days
+	}
+	return map[string]interface{}{"base_date": "today", "days_delta": days}, true
+}
+
+func parseCalculateIntent(original, normalized string) (map[string]string, bool) {
+	if !(strings.Contains(normalized, "计算") || strings.Contains(normalized, "算一下") || strings.Contains(normalized, "等于多少")) {
+		return nil, false
+	}
+	expr := original
+	for _, prefix := range []string{"计算", "算一下", "请计算", "帮我算一下"} {
+		expr = strings.TrimSpace(strings.TrimPrefix(expr, prefix))
+	}
+	expr = strings.TrimSuffix(expr, "等于多少")
+	expr = strings.Trim(expr, " ?？：:")
+	if expr == "" || !containsOperator(expr) {
+		return nil, false
+	}
+	return map[string]string{"expression": expr}, true
+}
+
+func parseRandomNumberIntent(text string) (map[string]int64, bool) {
+	if !(strings.Contains(text, "随机数") || strings.Contains(text, "随机一个数字") || strings.Contains(text, "抽一个数字")) {
+		return nil, false
+	}
+	args := map[string]int64{"min": 1, "max": 100}
+	numbers := numberPattern.FindAllString(text, 2)
+	if len(numbers) >= 1 {
+		if n, err := strconv.ParseInt(numbers[0], 10, 64); err == nil {
+			args["min"] = n
+		}
+	}
+	if len(numbers) >= 2 {
+		if n, err := strconv.ParseInt(numbers[1], 10, 64); err == nil {
+			args["max"] = n
+		}
+	}
+	return args, true
+}
+
+func parseChooseOptionIntent(original, normalized string) (map[string][]string, bool) {
+	if !(strings.Contains(normalized, "帮我选") || strings.Contains(normalized, "选一个") || strings.Contains(normalized, "二选一")) {
+		return nil, false
+	}
+	text := original
+	for _, prefix := range []string{"帮我选", "选一个", "二选一"} {
+		text = strings.TrimSpace(strings.TrimPrefix(text, prefix))
+	}
+	text = strings.Trim(text, " :：")
+	replacer := strings.NewReplacer("还是", ",", "或者", ",", "，", ",", "、", ",", "/", ",", "|", ",")
+	parts := strings.Split(replacer.Replace(text), ",")
+	options := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			options = append(options, part)
+		}
+	}
+	if len(options) < 2 {
+		return nil, false
+	}
+	return map[string][]string{"options": options}, true
+}
+
+func parseTextStatsIntent(original, normalized string) (map[string]string, bool) {
+	if !(strings.Contains(normalized, "统计字数") || strings.Contains(normalized, "文本长度") || strings.Contains(normalized, "多少字")) {
+		return nil, false
+	}
+	text := original
+	for _, sep := range []string{"：", ":"} {
+		if idx := strings.Index(text, sep); idx >= 0 {
+			text = strings.TrimSpace(text[idx+len(sep):])
+			break
+		}
+	}
+	if text == original {
+		return nil, false
+	}
+	if text == "" {
+		return nil, false
+	}
+	return map[string]string{"text": text}, true
+}
+
+func containsOperator(text string) bool {
+	return strings.ContainsAny(text, "+-*/%()")
 }
 
 func parseBindIntent(original, normalized string) (map[string]string, bool) {

@@ -29,6 +29,13 @@ func TestIntentRouter_Route(t *testing.T) {
 		{name: "path", text: "把后续内容保存到《日记》第 3 章《今天》", wantTool: "set_save_path"},
 		{name: "image", text: "保存图片 https://example.com/a.jpg", wantTool: "save_image_note"},
 		{name: "save text", text: "保存：今天读完了第一章", wantTool: "save_text_note"},
+		{name: "current time", text: "现在几点？", wantTool: "get_current_time"},
+		{name: "calculate", text: "算一下 1+2*3", wantTool: "calculate"},
+		{name: "date calculate", text: "7天后是几号", wantTool: "date_calculate"},
+		{name: "tomorrow date", text: "明天星期几", wantTool: "date_calculate"},
+		{name: "random number", text: "1到10随机数", wantTool: "random_number"},
+		{name: "choose option", text: "帮我选 A 还是 B", wantTool: "choose_option"},
+		{name: "text stats", text: "统计字数：你好 world", wantTool: "text_stats"},
 	}
 
 	for _, tt := range tests {
@@ -193,5 +200,31 @@ func TestIntentRouter_TodayAndYesterdayDateArgs(t *testing.T) {
 	}
 	if !strings.Contains(runner.executedArgs, timeutil.Now().AddDate(0, 0, -1).Format("2006-01-02")) {
 		t.Fatalf("unexpected yesterday args: %s", runner.executedArgs)
+	}
+}
+
+func TestIntentRouter_CommonToolArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{name: "calculate", text: "算一下 1+2*3", want: `"expression":"1+2*3"`},
+		{name: "random", text: "10到20随机数", want: `"max":20`},
+		{name: "choose", text: "帮我选 A 还是 B", want: `"options":["A","B"]`},
+		{name: "text stats", text: "统计字数：你好 world", want: `"text":"你好 world"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeToolRunner{result: "ok"}
+			router := NewIntentRouter(runner)
+			_, handled := router.Route(&model.User{}, "u1", 100, tt.text)
+			if !handled {
+				t.Fatal("expected handled intent")
+			}
+			if !strings.Contains(runner.executedArgs, tt.want) {
+				t.Fatalf("expected args to contain %s, got %s", tt.want, runner.executedArgs)
+			}
+		})
 	}
 }

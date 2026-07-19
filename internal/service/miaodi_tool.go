@@ -44,7 +44,7 @@ func NewToolExecutor(miaodi MiaodiClient, userRepo *repository.UserRepo, convRep
 
 // ToolDefinitions 返回模型可见的工具列表
 func ToolDefinitions() []openai.ToolDefinition {
-	return []openai.ToolDefinition{
+	tools := []openai.ToolDefinition{
 		{
 			Type: "function",
 			Function: openai.FunctionDef{
@@ -267,6 +267,7 @@ func ToolDefinitions() []openai.ToolDefinition {
 			},
 		},
 	}
+	return append(tools, commonToolDefinitions()...)
 }
 
 // Execute 根据工具名和参数执行，返回给模型看的结果字符串
@@ -302,6 +303,18 @@ func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversat
 		result = e.listRecentNotes(channelUserID, arguments)
 	case "query_notes_by_date":
 		result = e.queryNotesByDate(channelUserID, arguments)
+	case "get_current_time":
+		result = e.getCurrentTime(arguments)
+	case "calculate":
+		result = e.calculate(arguments)
+	case "date_calculate":
+		result = e.dateCalculate(arguments)
+	case "random_number":
+		result = e.randomNumber(arguments)
+	case "choose_option":
+		result = e.chooseOption(arguments)
+	case "text_stats":
+		result = e.textStats(arguments)
 	default:
 		result = fmt.Sprintf("未知工具: %s", name)
 	}
@@ -554,6 +567,8 @@ func (e *ToolExecutor) showHelp() string {
 - 查看当前绑定状态和路径
 - 查询最近保存的笔记
 - 按日期查询笔记
+- 查询当前准确时间、日期和星期
+- 做基础计算、日期推算、随机数、随机选择和文本统计
 - 清空当前会话
 
 绑定方式：
