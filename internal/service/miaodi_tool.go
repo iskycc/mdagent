@@ -386,6 +386,7 @@ func (e *ToolExecutor) bindMiaodiByEmailCode(user *model.User, channelUserID, ar
 		return fmt.Sprintf("绑定失败：%v", err)
 	}
 	if !isMiaodiSuccess(res) {
+		debuglog.Printf("get key failed user=%s email=%s code=%s response=%v", channelUserID, email, code, res)
 		e.recordCall(channelUserID, "", "get_key_failed")
 		return fmt.Sprintf("邮箱或验证码不正确：%s", miaodiMessage(res))
 	}

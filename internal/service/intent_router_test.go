@@ -151,6 +151,23 @@ func TestIntentRouter_EmailAlphaCodeArgs(t *testing.T) {
 	}
 }
 
+func TestIntentRouter_EmailUpperAlphaCodePreservesCase(t *testing.T) {
+	runner := &fakeToolRunner{result: "ok"}
+	router := NewIntentRouter(runner)
+	user := &model.User{Status: userStatusWaitingEmailCode}
+	_, handled := router.Route(user, "u1", 100, "TLRF")
+	if !handled {
+		t.Fatal("expected handled intent")
+	}
+	var args map[string]string
+	if err := json.Unmarshal([]byte(runner.executedArgs), &args); err != nil {
+		t.Fatalf("bad args: %v", err)
+	}
+	if args["code"] != "TLRF" {
+		t.Fatalf("unexpected code: %+v", args)
+	}
+}
+
 func TestIntentRouter_PathArgs(t *testing.T) {
 	runner := &fakeToolRunner{result: "ok"}
 	router := NewIntentRouter(runner)

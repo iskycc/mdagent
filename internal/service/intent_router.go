@@ -16,7 +16,7 @@ var (
 	emailPattern      = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	keyAfterPattern   = regexp.MustCompile(`(?i)(?:api\s*key|apikey|key|密钥)[：:\s]*([^\s，,。；;]+)`)
 	numberCodePattern = regexp.MustCompile(`[0-9]{4,8}`)
-	alphaCodePattern  = regexp.MustCompile(`^[a-z0-9]+$`)
+	alphaCodePattern  = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 )
 
 // IntentRouter 为小模型兜底处理高置信度意图。
@@ -248,9 +248,13 @@ func extractVerificationCode(text string) string {
 	if code := numberCodePattern.FindString(text); code != "" {
 		return code
 	}
-	for _, field := range strings.Fields(normalizeIntentText(text)) {
+	text = strings.TrimSpace(text)
+	replacer := strings.NewReplacer("：", ":", "，", ",", "。", ".", "\n", " ", "\t", " ")
+	text = replacer.Replace(text)
+	for _, field := range strings.Fields(strings.TrimPrefix(text, "/")) {
 		field = strings.Trim(field, " :.,;，。；")
-		if field == "code" || field == "验证码" || field == "verify" {
+		lowerField := strings.ToLower(field)
+		if lowerField == "code" || lowerField == "验证码" || lowerField == "verify" {
 			continue
 		}
 		if len(field) >= 4 && len(field) <= 12 && alphaCodePattern.MatchString(field) {
