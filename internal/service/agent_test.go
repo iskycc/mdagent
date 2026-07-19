@@ -96,11 +96,7 @@ func newTestPayload() *model.CallbackPayload {
 			UserID   string `json:"userId"`
 			Username string `json:"username"`
 		}{UserID: "u1", Username: "*"},
-		Message: struct {
-			ID         int64  `json:"id"`
-			Content    string `json:"content"`
-			CreateTime string `json:"createTime"`
-		}{ID: 1, Content: "hello", CreateTime: "2026-06-30 10:00:00"},
+		Message: model.CallbackMessage{ID: 1, Content: "hello", CreateTime: "2026-06-30 10:00:00"},
 	}
 }
 
