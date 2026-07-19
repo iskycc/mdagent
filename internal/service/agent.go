@@ -211,8 +211,11 @@ func toToolDefinitions() []openai.ToolDefinition {
 
 func buildSystemPrompt(user *model.User) string {
 	status := "未绑定"
-	if user.Status == "bound" {
+	if user.Status == userStatusBound {
 		status = "已绑定"
+	}
+	if user.Status == userStatusWaitingEmailCode {
+		status = "等待邮箱验证码"
 	}
 	title := user.Title
 	if title == "" || title == "null" {
@@ -225,8 +228,13 @@ func buildSystemPrompt(user *model.User) string {
 
 工具选择规则：
 - 绑定/提供 key -> bind_miaodi_key
+- 邮箱绑定/发送验证码 -> send_miaodi_email_code
+- 用户提供邮箱验证码 -> bind_miaodi_by_email_code
 - 设置保存位置/书/章/标题 -> set_save_path
 - 查看绑定状态或路径 -> get_user_profile
+- 获取当前绑定 key -> get_miaodi_key
+- 年度报告/报告地址 -> get_miaodi_annual_report
+- 解除绑定/解绑 -> unbind_miaodi_key
 - 保存文字 -> save_text_note
 - 保存图片链接 -> save_image_note，只入待上传队列
 - 清空/重置/忘记对话 -> reset_conversation

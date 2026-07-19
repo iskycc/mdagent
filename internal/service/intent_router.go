@@ -11,9 +11,12 @@ import (
 )
 
 var (
-	datePattern     = regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
-	urlPattern      = regexp.MustCompile(`https?://[^\s，,。；;]+`)
-	keyAfterPattern = regexp.MustCompile(`(?i)(?:api\s*key|apikey|key|密钥)[：:\s]*([^\s，,。；;]+)`)
+	datePattern       = regexp.MustCompile(`\d{4}-\d{2}-\d{2}`)
+	urlPattern        = regexp.MustCompile(`https?://[^\s，,。；;]+`)
+	emailPattern      = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
+	keyAfterPattern   = regexp.MustCompile(`(?i)(?:api\s*key|apikey|key|密钥)[：:\s]*([^\s，,。；;]+)`)
+	numberCodePattern = regexp.MustCompile(`[0-9]{4,8}`)
+	alphaCodePattern  = regexp.MustCompile(`^[a-z0-9]+$`)
 )
 
 // IntentRouter 为小模型兜底处理高置信度意图。
@@ -40,8 +43,17 @@ func (r *IntentRouter) Route(user *model.User, channelUserID string, conversatio
 	if isResetIntent(normalized) {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "reset_conversation", "{}"), true
 	}
+	if isUnbindIntent(normalized) {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "unbind_miaodi_key", "{}"), true
+	}
 	if isHelpIntent(normalized) {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "show_help", "{}"), true
+	}
+	if isAnnualReportIntent(normalized) {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "get_miaodi_annual_report", "{}"), true
+	}
+	if isGetKeyIntent(normalized) {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "get_miaodi_key", "{}"), true
 	}
 	if isProfileIntent(normalized) {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "get_user_profile", "{}"), true
@@ -51,6 +63,12 @@ func (r *IntentRouter) Route(user *model.User, channelUserID string, conversatio
 	}
 	if args, ok := parseBindIntent(text, normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "bind_miaodi_key", toJSONString(args)), true
+	}
+	if args, ok := parseEmailCodeIntent(user, text, normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "bind_miaodi_by_email_code", toJSONString(args)), true
+	}
+	if args, ok := parseSendEmailIntent(text, normalized); ok {
+		return r.toolExec.Execute(user, channelUserID, conversationID, "send_miaodi_email_code", toJSONString(args)), true
 	}
 	if args, ok := parsePathIntent(text, normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "set_save_path", toJSONString(args)), true
@@ -97,6 +115,30 @@ func isResetIntent(text string) bool {
 		strings.Contains(text, "清空") ||
 		strings.Contains(text, "重新开始") ||
 		strings.Contains(text, "忘记刚才")
+}
+
+func isUnbindIntent(text string) bool {
+	if len([]rune(text)) > 30 {
+		return false
+	}
+	return strings.Contains(text, "解绑") || strings.Contains(text, "解除绑定")
+}
+
+func isAnnualReportIntent(text string) bool {
+	if len([]rune(text)) > 40 {
+		return false
+	}
+	return strings.Contains(text, "年度报告") || strings.Contains(text, "报告地址")
+}
+
+func isGetKeyIntent(text string) bool {
+	if len([]rune(text)) > 40 {
+		return false
+	}
+	return strings.Contains(text, "获取当前绑定key") ||
+		strings.Contains(text, "当前绑定key") ||
+		strings.Contains(text, "我的key") ||
+		strings.Contains(text, "查看key")
 }
 
 func isProfileIntent(text string) bool {
@@ -150,6 +192,9 @@ func parseBindIntent(original, normalized string) (map[string]string, bool) {
 	if !(strings.Contains(normalized, "绑定") || strings.Contains(normalized, "bind")) {
 		return nil, false
 	}
+	if emailPattern.MatchString(original) || strings.Contains(normalized, "邮箱") {
+		return nil, false
+	}
 	original = strings.TrimPrefix(strings.TrimSpace(original), "/")
 	if matches := keyAfterPattern.FindStringSubmatch(original); len(matches) == 2 {
 		return map[string]string{"key": strings.TrimSpace(matches[1])}, true
@@ -165,6 +210,51 @@ func parseBindIntent(original, normalized string) (map[string]string, bool) {
 		}
 	}
 	return nil, false
+}
+
+func parseSendEmailIntent(original, normalized string) (map[string]string, bool) {
+	if !(strings.Contains(normalized, "邮箱") || strings.Contains(normalized, "验证码") || strings.Contains(normalized, "绑定")) {
+		return nil, false
+	}
+	email := emailPattern.FindString(original)
+	if email == "" {
+		return nil, false
+	}
+	return map[string]string{"email": email}, true
+}
+
+func parseEmailCodeIntent(user *model.User, original, normalized string) (map[string]string, bool) {
+	if strings.Contains(normalized, "发送") || strings.Contains(normalized, "邮箱") && emailPattern.MatchString(original) {
+		return nil, false
+	}
+	if user.Status != userStatusWaitingEmailCode && !strings.Contains(normalized, "验证码") {
+		return nil, false
+	}
+	code := extractVerificationCode(original)
+	if code == "" {
+		return nil, false
+	}
+	args := map[string]string{"code": code}
+	if email := emailPattern.FindString(original); email != "" {
+		args["email"] = email
+	}
+	return args, true
+}
+
+func extractVerificationCode(text string) string {
+	if code := numberCodePattern.FindString(text); code != "" {
+		return code
+	}
+	for _, field := range strings.Fields(normalizeIntentText(text)) {
+		field = strings.Trim(field, " :.,;，。；")
+		if field == "code" || field == "验证码" || field == "verify" {
+			continue
+		}
+		if len(field) >= 4 && len(field) <= 12 && alphaCodePattern.MatchString(field) {
+			return field
+		}
+	}
+	return ""
 }
 
 func parsePathIntent(original, normalized string) (map[string]string, bool) {

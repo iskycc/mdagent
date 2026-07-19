@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +12,14 @@ import (
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/pkg/openai"
 )
+
+const (
+	userStatusUnbound          = "unbound"
+	userStatusWaitingEmailCode = "waiting_email_code"
+	userStatusBound            = "bound"
+)
+
+var validEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
 // ToolExecutor 工具执行器
 type ToolExecutor struct {
@@ -55,6 +64,44 @@ func ToolDefinitions() []openai.ToolDefinition {
 		{
 			Type: "function",
 			Function: openai.FunctionDef{
+				Name:        "send_miaodi_email_code",
+				Description: "向用户的喵滴注册邮箱发送验证码。当用户想用邮箱绑定喵滴账号、提供邮箱获取验证码时调用。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"email": map[string]interface{}{
+							"type":        "string",
+							"description": "喵滴账号邮箱",
+						},
+					},
+					"required": []string{"email"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "bind_miaodi_by_email_code",
+				Description: "使用邮箱验证码换取喵滴 API Key 并完成绑定。当用户已收到验证码并提供验证码时调用。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"email": map[string]interface{}{
+							"type":        "string",
+							"description": "可选，喵滴账号邮箱；为空时使用上次发送验证码的邮箱",
+						},
+						"code": map[string]interface{}{
+							"type":        "string",
+							"description": "邮箱验证码",
+						},
+					},
+					"required": []string{"code"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
 				Name:        "set_save_path",
 				Description: "设置后续保存笔记的位置，包括书本、章节、标题。",
 				Parameters: map[string]interface{}{
@@ -82,6 +129,39 @@ func ToolDefinitions() []openai.ToolDefinition {
 			Function: openai.FunctionDef{
 				Name:        "get_user_profile",
 				Description: "获取当前用户的绑定状态和保存路径。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "get_miaodi_key",
+				Description: "查看当前用户已绑定的喵滴 API Key。只有用户明确要求获取当前绑定 key 时调用。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "get_miaodi_annual_report",
+				Description: "获取喵滴年度报告链接。当用户询问年度报告、报告地址时调用。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "unbind_miaodi_key",
+				Description: "解除当前用户绑定的喵滴 API Key。当用户明确说解除绑定、解绑喵滴账号时调用。",
 				Parameters: map[string]interface{}{
 					"type":       "object",
 					"properties": map[string]interface{}{},
@@ -195,10 +275,20 @@ func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversat
 	switch name {
 	case "bind_miaodi_key":
 		result = e.bindMiaodiKey(user, channelUserID, arguments)
+	case "send_miaodi_email_code":
+		result = e.sendMiaodiEmailCode(user, channelUserID, arguments)
+	case "bind_miaodi_by_email_code":
+		result = e.bindMiaodiByEmailCode(user, channelUserID, arguments)
 	case "set_save_path":
 		result = e.setSavePath(user, channelUserID, arguments)
 	case "get_user_profile":
 		result = e.getUserProfile(user)
+	case "get_miaodi_key":
+		result = e.getMiaodiKey(user)
+	case "get_miaodi_annual_report":
+		result = e.getMiaodiAnnualReport(user, channelUserID)
+	case "unbind_miaodi_key":
+		result = e.unbindMiaodiKey(user, channelUserID)
 	case "save_text_note":
 		result = e.saveTextNote(user, channelUserID, arguments)
 	case "save_image_note":
@@ -231,12 +321,85 @@ func (e *ToolExecutor) bindMiaodiKey(user *model.User, channelUserID, arguments 
 	if !e.miaodi.Check(args.Key) {
 		return "Key 校验失败，请检查是否正确"
 	}
-	if err := e.userRepo.UpdateAPIKeyAndStatus(channelUserID, args.Key, "bound"); err != nil {
+	if err := e.userRepo.UpdateAPIKeyAndStatus(channelUserID, args.Key, userStatusBound); err != nil {
 		return "绑定失败：数据库错误"
 	}
 	user.APIKey = args.Key
-	user.Status = "bound"
+	user.Status = userStatusBound
 	e.recordCall(channelUserID, args.Key, "bind_key")
+	return "绑定成功，你现在可以保存笔记和图片了"
+}
+
+func (e *ToolExecutor) sendMiaodiEmailCode(user *model.User, channelUserID, arguments string) string {
+	var args struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	args.Email = strings.TrimSpace(args.Email)
+	if !isValidEmail(args.Email) {
+		return "邮箱格式不正确，请检查后重试"
+	}
+	res, err := e.miaodi.SendEmail(args.Email)
+	if err != nil {
+		e.recordCall(channelUserID, "", "send_email_failed")
+		return fmt.Sprintf("邮件发送失败：%v", err)
+	}
+	if !isMiaodiSuccess(res) {
+		e.recordCall(channelUserID, "", "send_email_failed")
+		return fmt.Sprintf("邮件发送失败：%s", miaodiMessage(res))
+	}
+	if err := e.userRepo.UpdateEmailAndStatus(channelUserID, args.Email, userStatusWaitingEmailCode); err != nil {
+		return "邮件已发送，但保存绑定状态失败：数据库错误"
+	}
+	user.Email = args.Email
+	user.Status = userStatusWaitingEmailCode
+	e.recordCall(channelUserID, "", "send_email")
+	return "邮件已发送，请检查收件箱并回复收到的验证码"
+}
+
+func (e *ToolExecutor) bindMiaodiByEmailCode(user *model.User, channelUserID, arguments string) string {
+	var args struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	email := strings.TrimSpace(args.Email)
+	if email == "" {
+		email = strings.TrimSpace(user.Email)
+	}
+	if email == "" {
+		return "请先提供邮箱获取验证码"
+	}
+	code := strings.TrimSpace(args.Code)
+	if code == "" {
+		return "验证码不能为空"
+	}
+
+	res, err := e.miaodi.GetKey(email, code)
+	if err != nil {
+		e.recordCall(channelUserID, "", "get_key_failed")
+		return fmt.Sprintf("绑定失败：%v", err)
+	}
+	if !isMiaodiSuccess(res) {
+		e.recordCall(channelUserID, "", "get_key_failed")
+		return fmt.Sprintf("邮箱或验证码不正确：%s", miaodiMessage(res))
+	}
+	key, ok := res["key"].(string)
+	if !ok || key == "" {
+		e.recordCall(channelUserID, "", "get_key_failed")
+		return "绑定失败：喵滴没有返回 API Key"
+	}
+	if err := e.userRepo.UpdateAPIKeyAndStatus(channelUserID, key, userStatusBound); err != nil {
+		return "绑定失败：数据库错误"
+	}
+	user.APIKey = key
+	user.Email = email
+	user.Status = userStatusBound
+	e.recordCall(channelUserID, key, "get_key")
 	return "绑定成功，你现在可以保存笔记和图片了"
 }
 
@@ -263,15 +426,51 @@ func (e *ToolExecutor) setSavePath(user *model.User, channelUserID, arguments st
 
 func (e *ToolExecutor) getUserProfile(user *model.User) string {
 	masked := "未绑定"
-	if user.Status == "bound" && user.APIKey != "" {
+	if user.Status == userStatusBound && user.APIKey != "" {
 		masked = maskKey(user.APIKey)
 	}
-	return fmt.Sprintf("绑定状态：%s\n喵滴 Key：%s\n保存路径：书本《%s》/ 章节《%s》/ 标题《%s》",
-		user.Status, masked, user.Book, user.Chara, displayTitle(user.Title))
+	email := user.Email
+	if email == "" {
+		email = "未记录"
+	}
+	return fmt.Sprintf("绑定状态：%s\n喵滴 Key：%s\n绑定邮箱：%s\n保存路径：书本《%s》/ 章节《%s》/ 标题《%s》",
+		user.Status, masked, email, user.Book, user.Chara, displayTitle(user.Title))
+}
+
+func (e *ToolExecutor) getMiaodiKey(user *model.User) string {
+	if user.Status != userStatusBound || user.APIKey == "" {
+		return "尚未绑定喵滴 Key"
+	}
+	return user.APIKey
+}
+
+func (e *ToolExecutor) getMiaodiAnnualReport(user *model.User, channelUserID string) string {
+	if user.Status != userStatusBound || user.APIKey == "" {
+		return "尚未绑定喵滴 Key，请先绑定"
+	}
+	if !e.miaodi.Check(user.APIKey) {
+		return "你的喵滴 API Key 已失效，请重新绑定"
+	}
+	e.recordCall(channelUserID, user.APIKey, "annual_report")
+	return fmt.Sprintf("你的喵滴年度报告地址：https://api.libv.cc/miaodi/report/page?key=%s", user.APIKey)
+}
+
+func (e *ToolExecutor) unbindMiaodiKey(user *model.User, channelUserID string) string {
+	if user.Status != userStatusBound && user.APIKey == "" {
+		return "你当前还没有绑定喵滴 Key"
+	}
+	if err := e.userRepo.ClearBinding(channelUserID); err != nil {
+		return "解绑失败：数据库错误"
+	}
+	user.APIKey = ""
+	user.Email = ""
+	user.Status = userStatusUnbound
+	e.recordCall(channelUserID, "", "unbind_key")
+	return "解绑成功，欢迎再次使用"
 }
 
 func (e *ToolExecutor) saveTextNote(user *model.User, channelUserID, arguments string) string {
-	if user.Status != "bound" || user.APIKey == "" {
+	if user.Status != userStatusBound || user.APIKey == "" {
 		return "尚未绑定喵滴 Key，请先绑定"
 	}
 	var args struct {
@@ -293,7 +492,7 @@ func (e *ToolExecutor) saveTextNote(user *model.User, channelUserID, arguments s
 		e.recordCall(channelUserID, user.APIKey, "put_text_failed")
 		return fmt.Sprintf("保存失败：%v", err)
 	}
-	if code, ok := res["code"].(float64); ok && code == 20000 {
+	if isMiaodiSuccess(res) {
 		e.recordCall(channelUserID, user.APIKey, "put_text")
 		return fmt.Sprintf("已保存到：书本《%s》/ 章节《%s》/ 标题《%s》", user.Book, user.Chara, title)
 	}
@@ -306,7 +505,7 @@ func (e *ToolExecutor) saveTextNote(user *model.User, channelUserID, arguments s
 }
 
 func (e *ToolExecutor) saveImageNote(user *model.User, channelUserID, arguments string) string {
-	if user.Status != "bound" || user.APIKey == "" {
+	if user.Status != userStatusBound || user.APIKey == "" {
 		return "尚未绑定喵滴 Key，请先绑定"
 	}
 	var args struct {
@@ -343,6 +542,9 @@ func (e *ToolExecutor) resetConversation(user *model.User, channelUserID string,
 func (e *ToolExecutor) showHelp() string {
 	return `我是喵滴 AI 助手，可以帮你：
 - 绑定喵滴 API Key
+- 通过邮箱验证码绑定喵滴账号
+- 查看当前绑定 Key、解除绑定
+- 获取喵滴年度报告链接
 - 设置保存路径（书/章/标题）
 - 保存文本笔记
 - 保存图片到待上传队列
@@ -432,6 +634,14 @@ func formatAction(action string) string {
 		return "图片保存失败"
 	case "bind_key":
 		return "绑定 Key"
+	case "send_email":
+		return "发送邮箱验证码"
+	case "get_key":
+		return "邮箱验证码绑定"
+	case "annual_report":
+		return "年度报告"
+	case "unbind_key":
+		return "解除绑定"
 	default:
 		return action
 	}
@@ -445,6 +655,33 @@ func isNoteAction(action string) bool {
 	default:
 		return false
 	}
+}
+
+func isMiaodiSuccess(res map[string]interface{}) bool {
+	switch code := res["code"].(type) {
+	case float64:
+		return code == 20000
+	case int:
+		return code == 20000
+	case int64:
+		return code == 20000
+	default:
+		return false
+	}
+}
+
+func miaodiMessage(res map[string]interface{}) string {
+	if msg, ok := res["message"].(string); ok && msg != "" {
+		return msg
+	}
+	if msg, ok := res["msg"].(string); ok && msg != "" {
+		return msg
+	}
+	return "未知错误"
+}
+
+func isValidEmail(email string) bool {
+	return validEmailPattern.MatchString(email)
 }
 
 func (e *ToolExecutor) recordCall(channelUserID, apikey, action string) {

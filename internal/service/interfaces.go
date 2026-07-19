@@ -33,6 +33,8 @@ type ToolRunner interface {
 // MiaodiClient 是工具执行器需要的喵滴客户端接口
 type MiaodiClient interface {
 	Check(key string) bool
+	SendEmail(email string) (map[string]interface{}, error)
+	GetKey(email, code string) (map[string]interface{}, error)
 	GetInfo(key string) (map[string]interface{}, error)
 	PutText(key, book, chapter, title, content string) (map[string]interface{}, error)
 }

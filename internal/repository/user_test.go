@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 )
 
 func newUserRepoMock(t *testing.T) (*UserRepo, sqlmock.Sqlmock) {
@@ -20,6 +21,7 @@ func newUserRepoMock(t *testing.T) (*UserRepo, sqlmock.Sqlmock) {
 func TestUserRepo_EnsureTable(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
 	if err := r.EnsureTable(); err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -29,16 +31,27 @@ func TestUserRepo_EnsureTable(t *testing.T) {
 func TestUserRepo_EnsureTable_MigrateError(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnError(sqlmock.ErrCancelled)
 	if err := r.EnsureTable(); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
+func TestUserRepo_EnsureTable_EmailColumnAlreadyExists(t *testing.T) {
+	r, mock := newUserRepoMock(t)
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnError(&mysql.MySQLError{Number: 1060, Message: "duplicate column"})
+	mock.ExpectExec("UPDATE agent_users").WithArgs(DefaultBook, DefaultChara).WillReturnResult(sqlmock.NewResult(0, 0))
+	if err := r.EnsureTable(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestUserRepo_Get(t *testing.T) {
 	r, mock := newUserRepoMock(t)
-	rows := sqlmock.NewRows([]string{"channel_user_id", "apikey", "status", "book", "chara", "title"}).
-		AddRow("u1", "key1", "bound", "book1", "chara1", "title1")
+	rows := sqlmock.NewRows([]string{"channel_user_id", "apikey", "status", "book", "chara", "title", "email"}).
+		AddRow("u1", "key1", "bound", "book1", "chara1", "title1", "u@example.com")
 	mock.ExpectQuery("SELECT channel_user_id").WithArgs("u1").WillReturnRows(rows)
 
 	user, err := r.Get("u1")
@@ -52,8 +65,8 @@ func TestUserRepo_Get(t *testing.T) {
 
 func TestUserRepo_GetOrCreate_Existing(t *testing.T) {
 	r, mock := newUserRepoMock(t)
-	rows := sqlmock.NewRows([]string{"channel_user_id", "apikey", "status", "book", "chara", "title"}).
-		AddRow("u1", "key1", "bound", "book1", "chara1", "title1")
+	rows := sqlmock.NewRows([]string{"channel_user_id", "apikey", "status", "book", "chara", "title", "email"}).
+		AddRow("u1", "key1", "bound", "book1", "chara1", "title1", "")
 	mock.ExpectQuery("SELECT channel_user_id").WithArgs("u1").WillReturnRows(rows)
 
 	user, err := r.GetOrCreate("u1")
@@ -69,8 +82,8 @@ func TestUserRepo_GetOrCreate_New(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectQuery("SELECT channel_user_id").WithArgs("u1").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("INSERT IGNORE INTO agent_users").WithArgs("u1", DefaultBook, DefaultChara).WillReturnResult(sqlmock.NewResult(1, 1))
-	rows := sqlmock.NewRows([]string{"channel_user_id", "apikey", "status", "book", "chara", "title"}).
-		AddRow("u1", "", "unbound", DefaultBook, DefaultChara, "")
+	rows := sqlmock.NewRows([]string{"channel_user_id", "apikey", "status", "book", "chara", "title", "email"}).
+		AddRow("u1", "", "unbound", DefaultBook, DefaultChara, "", "")
 	mock.ExpectQuery("SELECT channel_user_id").WithArgs("u1").WillReturnRows(rows)
 
 	user, err := r.GetOrCreate("u1")
@@ -131,6 +144,22 @@ func TestUserRepo_UpdateSavePath(t *testing.T) {
 	r, mock := newUserRepoMock(t)
 	mock.ExpectExec("UPDATE agent_users SET book").WithArgs("b", "c", "t", "u1").WillReturnResult(sqlmock.NewResult(0, 1))
 	if err := r.UpdateSavePath("u1", "b", "c", "t"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestUserRepo_UpdateEmailAndStatus(t *testing.T) {
+	r, mock := newUserRepoMock(t)
+	mock.ExpectExec("UPDATE agent_users SET email").WithArgs("u@example.com", "waiting_email_code", "u1").WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := r.UpdateEmailAndStatus("u1", "u@example.com", "waiting_email_code"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestUserRepo_ClearBinding(t *testing.T) {
+	r, mock := newUserRepoMock(t)
+	mock.ExpectExec("UPDATE agent_users SET apikey").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := r.ClearBinding("u1"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

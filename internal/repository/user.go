@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/go-sql-driver/mysql"
+
 	"miaodi-agent/internal/model"
 )
 
@@ -28,11 +30,15 @@ func (r *UserRepo) EnsureTable() error {
 			book VARCHAR(64) DEFAULT '传送鸽',
 			chara VARCHAR(64) DEFAULT '喵滴鸽',
 			title VARCHAR(128) DEFAULT '',
+			email VARCHAR(128) DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 	`)
 	if err != nil {
+		return err
+	}
+	if err := r.ensureEmailColumn(); err != nil {
 		return err
 	}
 	return r.migrateLegacyDefaults()
@@ -49,8 +55,8 @@ func (r *UserRepo) GetOrCreate(channelUserID string) (*model.User, error) {
 	}
 	// INSERT IGNORE 可容忍并发同时插入导致的重复主键
 	_, err = r.db.Exec(`
-		INSERT IGNORE INTO agent_users(channel_user_id, apikey, status, book, chara, title)
-		VALUES (?, '', 'unbound', ?, ?, '')`, channelUserID, DefaultBook, DefaultChara)
+		INSERT IGNORE INTO agent_users(channel_user_id, apikey, status, book, chara, title, email)
+		VALUES (?, '', 'unbound', ?, ?, '', '')`, channelUserID, DefaultBook, DefaultChara)
 	if err != nil {
 		return nil, fmt.Errorf("create user failed: %w", err)
 	}
@@ -60,11 +66,11 @@ func (r *UserRepo) GetOrCreate(channelUserID string) (*model.User, error) {
 // Get 查询用户
 func (r *UserRepo) Get(channelUserID string) (*model.User, error) {
 	row := r.db.QueryRow(`
-		SELECT channel_user_id, apikey, status, book, chara, title
+		SELECT channel_user_id, apikey, status, book, chara, title, email
 		FROM agent_users WHERE channel_user_id = ?`, channelUserID)
 	user := &model.User{}
 	err := row.Scan(&user.ChannelUserID, &user.APIKey, &user.Status,
-		&user.Book, &user.Chara, &user.Title)
+		&user.Book, &user.Chara, &user.Title, &user.Email)
 	return user, err
 }
 
@@ -90,6 +96,7 @@ func (r *UserRepo) UpdateField(channelUserID, field, value string) error {
 		"book":   true,
 		"chara":  true,
 		"title":  true,
+		"email":  true,
 	}
 	if !allowed[field] {
 		return fmt.Errorf("invalid field: %s", field)
@@ -107,6 +114,22 @@ func (r *UserRepo) UpdateAPIKeyAndStatus(channelUserID, apikey, status string) e
 	return err
 }
 
+// UpdateEmailAndStatus 更新待验证邮箱和绑定状态。
+func (r *UserRepo) UpdateEmailAndStatus(channelUserID, email, status string) error {
+	_, err := r.db.Exec(`
+		UPDATE agent_users SET email = ?, status = ? WHERE channel_user_id = ?`,
+		email, status, channelUserID)
+	return err
+}
+
+// ClearBinding 清除当前用户绑定信息。
+func (r *UserRepo) ClearBinding(channelUserID string) error {
+	_, err := r.db.Exec(`
+		UPDATE agent_users SET apikey = '', email = '', status = 'unbound' WHERE channel_user_id = ?`,
+		channelUserID)
+	return err
+}
+
 // UpdateSavePath 更新保存路径
 func (r *UserRepo) UpdateSavePath(channelUserID, book, chara, title string) error {
 	_, err := r.db.Exec(`
@@ -121,5 +144,17 @@ func (r *UserRepo) migrateLegacyDefaults() error {
 		SET book = ?, chara = ?
 		WHERE book = '默认' AND chara = '微信' AND title = ''`,
 		DefaultBook, DefaultChara)
+	return err
+}
+
+func (r *UserRepo) ensureEmailColumn() error {
+	_, err := r.db.Exec(`ALTER TABLE agent_users ADD COLUMN email VARCHAR(128) DEFAULT ''`)
+	if err == nil {
+		return nil
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1060 {
+		return nil
+	}
 	return err
 }

@@ -12,13 +12,29 @@ import (
 )
 
 type fakeMiaodi struct {
-	checkResult bool
-	putResult   map[string]interface{}
+	checkResult     bool
+	putResult       map[string]interface{}
+	sendEmailResult map[string]interface{}
+	sendEmailErr    error
+	getKeyResult    map[string]interface{}
+	getKeyErr       error
 }
 
 func (f *fakeMiaodi) Check(key string) bool { return f.checkResult }
 func (f *fakeMiaodi) GetInfo(key string) (map[string]interface{}, error) {
 	return map[string]interface{}{"code": 20000}, nil
+}
+func (f *fakeMiaodi) SendEmail(email string) (map[string]interface{}, error) {
+	if f.sendEmailResult != nil || f.sendEmailErr != nil {
+		return f.sendEmailResult, f.sendEmailErr
+	}
+	return map[string]interface{}{"code": 20000}, nil
+}
+func (f *fakeMiaodi) GetKey(email, code string) (map[string]interface{}, error) {
+	if f.getKeyResult != nil || f.getKeyErr != nil {
+		return f.getKeyResult, f.getKeyErr
+	}
+	return map[string]interface{}{"code": 20000, "key": "key-from-email"}, nil
 }
 func (f *fakeMiaodi) PutText(key, book, chapter, title, content string) (map[string]interface{}, error) {
 	return f.putResult, nil
@@ -58,6 +74,87 @@ func TestToolExecutor_bindMiaodiKey_CheckFail(t *testing.T) {
 	res := exec.Execute(user, "u1", 1, "bind_miaodi_key", `{"key":"bad"}`)
 	if res != "Key 校验失败，请检查是否正确" {
 		t.Errorf("unexpected result: %s", res)
+	}
+}
+
+func TestToolExecutor_sendMiaodiEmailCode_Success(t *testing.T) {
+	exec, mock := newToolExecutorMock(t)
+	mock.ExpectExec("UPDATE agent_users SET email").WithArgs("u@example.com", userStatusWaitingEmailCode, "u1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "", "miaodi", "send_email", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	user := &model.User{ChannelUserID: "u1", Status: userStatusUnbound}
+	res := exec.Execute(user, "u1", 1, "send_miaodi_email_code", `{"email":"u@example.com"}`)
+	if res != "邮件已发送，请检查收件箱并回复收到的验证码" {
+		t.Errorf("unexpected result: %s", res)
+	}
+	if user.Email != "u@example.com" || user.Status != userStatusWaitingEmailCode {
+		t.Errorf("unexpected user state: %+v", user)
+	}
+}
+
+func TestToolExecutor_sendMiaodiEmailCode_InvalidEmail(t *testing.T) {
+	exec, _ := newToolExecutorMock(t)
+	res := exec.Execute(&model.User{}, "u1", 1, "send_miaodi_email_code", `{"email":"bad"}`)
+	if res != "邮箱格式不正确，请检查后重试" {
+		t.Errorf("unexpected result: %s", res)
+	}
+}
+
+func TestToolExecutor_bindMiaodiByEmailCode_Success(t *testing.T) {
+	exec, mock := newToolExecutorMock(t)
+	mock.ExpectExec("UPDATE agent_users SET apikey").WithArgs("key-from-email", userStatusBound, "u1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key-from-email", "miaodi", "get_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	user := &model.User{ChannelUserID: "u1", Email: "u@example.com", Status: userStatusWaitingEmailCode}
+	res := exec.Execute(user, "u1", 1, "bind_miaodi_by_email_code", `{"code":"123456"}`)
+	if res != "绑定成功，你现在可以保存笔记和图片了" {
+		t.Errorf("unexpected result: %s", res)
+	}
+	if user.APIKey != "key-from-email" || user.Status != userStatusBound {
+		t.Errorf("unexpected user state: %+v", user)
+	}
+}
+
+func TestToolExecutor_bindMiaodiByEmailCode_MissingEmail(t *testing.T) {
+	exec, _ := newToolExecutorMock(t)
+	res := exec.Execute(&model.User{}, "u1", 1, "bind_miaodi_by_email_code", `{"code":"123456"}`)
+	if res != "请先提供邮箱获取验证码" {
+		t.Errorf("unexpected result: %s", res)
+	}
+}
+
+func TestToolExecutor_getMiaodiKey(t *testing.T) {
+	exec, _ := newToolExecutorMock(t)
+	user := &model.User{Status: userStatusBound, APIKey: "key1"}
+	res := exec.Execute(user, "u1", 1, "get_miaodi_key", `{}`)
+	if res != "key1" {
+		t.Errorf("unexpected result: %s", res)
+	}
+}
+
+func TestToolExecutor_getMiaodiAnnualReport(t *testing.T) {
+	exec, mock := newToolExecutorMock(t)
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "annual_report", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	user := &model.User{ChannelUserID: "u1", Status: userStatusBound, APIKey: "key1"}
+	res := exec.Execute(user, "u1", 1, "get_miaodi_annual_report", `{}`)
+	if !strings.Contains(res, "https://api.libv.cc/miaodi/report/page?key=key1") {
+		t.Errorf("unexpected result: %s", res)
+	}
+}
+
+func TestToolExecutor_unbindMiaodiKey(t *testing.T) {
+	exec, mock := newToolExecutorMock(t)
+	mock.ExpectExec("UPDATE agent_users SET apikey").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "", "miaodi", "unbind_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	user := &model.User{ChannelUserID: "u1", Status: userStatusBound, APIKey: "key1", Email: "u@example.com"}
+	res := exec.Execute(user, "u1", 1, "unbind_miaodi_key", `{}`)
+	if res != "解绑成功，欢迎再次使用" {
+		t.Errorf("unexpected result: %s", res)
+	}
+	if user.APIKey != "" || user.Email != "" || user.Status != userStatusUnbound {
+		t.Errorf("unexpected user state: %+v", user)
 	}
 }
 

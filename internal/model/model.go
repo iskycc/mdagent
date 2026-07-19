@@ -99,10 +99,11 @@ func NewSuccessResponse(content string) CallbackResponse {
 type User struct {
 	ChannelUserID string
 	APIKey        string
-	Status        string // unbound / bound
+	Status        string // unbound / waiting_email_code / bound
 	Book          string
 	Chara         string
 	Title         string
+	Email         string
 }
 
 // Conversation 会话记录

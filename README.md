@@ -1,6 +1,6 @@
 # 喵滴 AI Agent（传送鸽 Bot）
 
-这是一个对接 传送鸽 Bot 回调与喵滴 API 的 AI Agent。收到用户消息后，它调用标准 OpenAI 格式的大模型 API（如 DeepSeek）进行 tool-call 决策，自动完成喵滴 Key 绑定、保存文本笔记、图片落库等操作。
+这是一个对接 传送鸽 Bot 回调与喵滴 API 的 AI Agent。收到用户消息后，它调用标准 OpenAI 格式的大模型 API（如 DeepSeek）进行 tool-call 决策，自动完成喵滴 Key 绑定、邮箱验证码绑定、保存文本笔记、图片落库等操作。
 
 ## 目录
 
@@ -100,8 +100,13 @@ GET /api/stats
 ## 支持的模型能力（tools）
 
 - `bind_miaodi_key(key)`：绑定喵滴 API Key。
+- `send_miaodi_email_code(email)`：向喵滴账号邮箱发送验证码。
+- `bind_miaodi_by_email_code(email?, code)`：使用邮箱验证码换取喵滴 API Key 并绑定。
 - `set_save_path(book, chapter, title)`：设置保存路径。
 - `get_user_profile()`：查看绑定状态和保存路径。
+- `get_miaodi_key()`：查看当前绑定的喵滴 API Key。
+- `get_miaodi_annual_report()`：获取喵滴年度报告链接。
+- `unbind_miaodi_key()`：解除当前喵滴绑定。
 - `save_text_note(content, title?)`：保存文本笔记。
 - `save_image_note(image_url, title?)`：保存图片到待上传队列。
 - `reset_conversation()`：清空当前会话历史。
@@ -112,6 +117,11 @@ GET /api/stats
 你可以直接用自然语言与 Bot 交流，例如：
 
 - "绑定我的喵滴 key：xxxxx"
+- "用邮箱 user@example.com 绑定喵滴"
+- "验证码 123456"
+- "查看当前绑定 key"
+- "年度报告地址"
+- "解除绑定"
 - "把后续内容保存到《日记》第 3 章《今天》"
 - "帮我清空刚才的对话"
 - "最近我保存了什么？"
@@ -119,7 +129,7 @@ GET /api/stats
 
 Bot 会通过 tool-call 自动调用合适的工具完成操作。
 
-为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、设置路径、保存文本/图片、查询最近或指定日期记录），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 自动裁剪旧会话历史，降低 token 溢出概率。
+为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、邮箱验证码绑定、解绑、年度报告、查看 Key、设置路径、保存文本/图片、查询最近或指定日期记录），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 自动裁剪旧会话历史，降低 token 溢出概率。
 
 排查真机问题时可以临时开启应用层调试日志：
 
