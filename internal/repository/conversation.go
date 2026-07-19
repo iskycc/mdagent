@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/go-sql-driver/mysql"
 
+	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/openai"
 )
 
@@ -138,7 +138,7 @@ func (r *ConversationRepo) appendMessagesTx(channelUserID string, conversationID
 		INSERT INTO agent_conversations(channel_user_id, conversation_id, messages, updated_at)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE messages = VALUES(messages), updated_at = VALUES(updated_at)`,
-		channelUserID, conversationID, string(newRaw), time.Now())
+		channelUserID, conversationID, string(newRaw), timeutil.Now())
 	if err != nil {
 		return err
 	}

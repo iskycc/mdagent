@@ -5,9 +5,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/timeutil"
 )
 
 var (
@@ -176,10 +176,10 @@ func parseDateQueryIntent(text string) (map[string]string, bool) {
 		return nil, false
 	}
 	if strings.Contains(text, "昨天") {
-		return map[string]string{"date": time.Now().AddDate(0, 0, -1).Format("2006-01-02")}, true
+		return map[string]string{"date": timeutil.Now().AddDate(0, 0, -1).Format("2006-01-02")}, true
 	}
 	if strings.Contains(text, "今天") {
-		return map[string]string{"date": time.Now().Format("2006-01-02")}, true
+		return map[string]string{"date": timeutil.Date()}, true
 	}
 	date := datePattern.FindString(text)
 	if date == "" {

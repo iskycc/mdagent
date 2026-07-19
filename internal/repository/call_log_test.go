@@ -27,7 +27,7 @@ func TestCallLogRepo_EnsureTable(t *testing.T) {
 
 func TestCallLogRepo_Record(t *testing.T) {
 	r, mock := newCallLogRepoMock(t)
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key", "miaodi", "put_text", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key", "miaodi", "put_text", beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(1, 1))
 	if err := r.Record("u1", "key", "miaodi", "put_text"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}

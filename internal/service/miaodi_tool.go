@@ -10,6 +10,7 @@ import (
 	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
+	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/openai"
 )
 
@@ -698,20 +699,20 @@ func (e *ToolExecutor) recordCall(channelUserID, apikey, action string) {
 
 func getNowTitle(title string) string {
 	if title == "" || title == "null" {
-		return time.Now().Format("2006-01-02")
+		return timeutil.Date()
 	}
 	return title
 }
 
 func displayTitle(title string) string {
 	if title == "" {
-		return time.Now().Format("2006-01-02") + "（默认）"
+		return timeutil.Date() + "（默认）"
 	}
 	return title
 }
 
 func formatLogTime(t time.Time) string {
-	return t.Format("2006-01-02 15:04")
+	return timeutil.FormatMinute(t)
 }
 
 func maskKey(key string) string {

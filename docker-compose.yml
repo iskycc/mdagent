@@ -12,6 +12,7 @@ services:
       DB_NAME: ${DB_NAME:?set DB_NAME}
       DB_MAX_OPEN: ${DB_MAX_OPEN:-50}
       DB_MAX_IDLE: ${DB_MAX_IDLE:-10}
+      TZ: ${TZ:-Asia/Shanghai}
       APP_DEBUG: ${APP_DEBUG:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com/v1}

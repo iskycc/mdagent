@@ -27,7 +27,7 @@ func TestPendingImageRepo_EnsureTable(t *testing.T) {
 
 func TestPendingImageRepo_Insert(t *testing.T) {
 	r, mock := newPendingImageRepoMock(t)
-	mock.ExpectExec("INSERT INTO pending_images").WithArgs("key1", "http://img", "book", "chara", "title", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO pending_images").WithArgs("key1", "http://img", "book", "chara", "title", beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(1, 1))
 	if err := r.Insert("key1", "http://img", "book", "chara", "title"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}

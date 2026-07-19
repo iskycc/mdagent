@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/openai"
 )
 
@@ -219,7 +219,7 @@ func buildSystemPrompt(user *model.User) string {
 	}
 	title := user.Title
 	if title == "" || title == "null" {
-		title = time.Now().Format("2006-01-02")
+		title = timeutil.Date()
 	}
 
 	return fmt.Sprintf(`你是“喵滴 AI 助手”。不要编造操作结果；用户要执行动作时必须调用工具。
@@ -243,5 +243,5 @@ func buildSystemPrompt(user *model.User) string {
 - 某日期/今天/昨天保存了什么 -> query_notes_by_date，date 用 YYYY-MM-DD
 
 未绑定时，保存类请求先提示绑定。最终回复简洁自然，200 字以内。`,
-		status, user.Book, user.Chara, title, time.Now().Format("2006-01-02"))
+		status, user.Book, user.Chara, title, timeutil.Date())
 }

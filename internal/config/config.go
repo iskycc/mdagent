@@ -46,7 +46,7 @@ func Load() *Config {
 
 // DSN 返回 MySQL 连接串
 func (c *Config) DSN() string {
-	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&interpolateParams=true",
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Asia%%2FShanghai&time_zone=%%27%%2B08%%3A00%%27&interpolateParams=true",
 		c.DBUser, c.DBPass, c.DBHost, c.DBPort, c.DBName)
 }
 

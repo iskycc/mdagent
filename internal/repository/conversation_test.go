@@ -89,7 +89,7 @@ func TestConversationRepo_AppendMessage(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT messages FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("INSERT INTO agent_conversations").
-		WithArgs("u1", int64(1), stringArg{}, sqlmock.AnyArg()).
+		WithArgs("u1", int64(1), stringArg{}, beijingTimeArg{}).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 

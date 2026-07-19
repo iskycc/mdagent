@@ -2,11 +2,11 @@ package service
 
 import (
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 
 	"miaodi-agent/internal/repository"
+	"miaodi-agent/internal/timeutil"
 )
 
 func newStatsDeps(t *testing.T) (*StatsService, sqlmock.Sqlmock) {
@@ -63,8 +63,8 @@ func TestStatsService_ToJSON(t *testing.T) {
 }
 
 func TestFillMissingDates(t *testing.T) {
-	today := time.Now().Format("2006-01-02")
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	today := timeutil.Date()
+	yesterday := timeutil.Now().AddDate(0, 0, -1).Format("2006-01-02")
 
 	input := []repository.DailyCallStat{
 		{Date: yesterday, Count: 5},

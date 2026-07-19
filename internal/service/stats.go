@@ -2,9 +2,9 @@ package service
 
 import (
 	"encoding/json"
-	"time"
 
 	"miaodi-agent/internal/repository"
+	"miaodi-agent/internal/timeutil"
 )
 
 // StatsData 统计页面数据模型
@@ -41,7 +41,7 @@ func NewStatsService(userRepo *repository.UserRepo, convRepo *repository.Convers
 
 // GetStats 聚合所有统计数据
 func (s *StatsService) GetStats() (*StatsData, error) {
-	data := &StatsData{GeneratedAt: time.Now().Format("2006-01-02 15:04:05")}
+	data := &StatsData{GeneratedAt: timeutil.DateTime()}
 
 	totalUsers, err := s.userRepo.CountTotal()
 	if err != nil {
@@ -127,7 +127,7 @@ func fillMissingDates(stats []repository.DailyCallStat, days int) []repository.D
 	}
 
 	var result []repository.DailyCallStat
-	now := time.Now()
+	now := timeutil.Now()
 	for i := days - 1; i >= 0; i-- {
 		d := now.AddDate(0, 0, -i).Format("2006-01-02")
 		count := 0

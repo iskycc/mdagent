@@ -2,9 +2,9 @@ package repository
 
 import (
 	"database/sql"
-	"time"
 
 	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/timeutil"
 )
 
 // PendingImageRepo 待上传图片数据访问层
@@ -40,7 +40,7 @@ func (r *PendingImageRepo) Insert(apikey, imageURL, book, chara, title string) e
 	_, err := r.db.Exec(`
 		INSERT INTO pending_images(apikey, image_url, book, chara, title, status, created_at)
 		VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-		apikey, imageURL, book, chara, title, time.Now())
+		apikey, imageURL, book, chara, title, timeutil.Now())
 	return err
 }
 

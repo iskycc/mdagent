@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +103,10 @@ func TestDSN(t *testing.T) {
 	dsn := cfg.DSN()
 	if dsn == "" {
 		t.Error("DSN is empty")
+	}
+	for _, want := range []string{"loc=Asia%2FShanghai", "time_zone=%27%2B08%3A00%27"} {
+		if !strings.Contains(dsn, want) {
+			t.Fatalf("expected DSN to contain %s, got %s", want, dsn)
+		}
 	}
 }

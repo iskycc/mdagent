@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/timeutil"
 )
 
 func TestIntentRouter_Route(t *testing.T) {
@@ -191,7 +191,7 @@ func TestIntentRouter_TodayAndYesterdayDateArgs(t *testing.T) {
 	if !handled {
 		t.Fatal("expected handled intent")
 	}
-	if !strings.Contains(runner.executedArgs, time.Now().AddDate(0, 0, -1).Format("2006-01-02")) {
+	if !strings.Contains(runner.executedArgs, timeutil.Now().AddDate(0, 0, -1).Format("2006-01-02")) {
 		t.Fatalf("unexpected yesterday args: %s", runner.executedArgs)
 	}
 }

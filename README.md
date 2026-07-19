@@ -19,6 +19,7 @@
 | `DB_NAME` | MySQL 数据库名 | `miaodi_agent` |
 | `DB_MAX_OPEN` | 最大打开连接数 | `50` |
 | `DB_MAX_IDLE` | 最大空闲连接数 | `10` |
+| `TZ` | 容器日志和应用默认时区 | `Asia/Shanghai` |
 | `APP_DEBUG` | 打印 webhook 入参、程序回包、Agent 决策、工具调用和应用错误 | `false` |
 | `OPENAI_API_KEY` | 大模型 API Key | - |
 | `OPENAI_BASE_URL` | OpenAI 兼容 Base URL | `https://api.deepseek.com/v1` |
@@ -69,6 +70,8 @@ HOST_PORT=18080 docker compose up -d --remove-orphans
 - `api_call_log`
 
 新用户默认保存路径为：书本《传送鸽》/ 章节《喵滴鸽》，标题默认使用当天日期。
+
+应用内记录时间、默认标题日期、统计页面时间按北京时间（`Asia/Shanghai`）处理；MySQL 连接会话也会设置为 `+08:00`。
 
 ## 对接 传送鸽
 

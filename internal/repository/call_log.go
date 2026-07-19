@@ -3,6 +3,8 @@ package repository
 import (
 	"database/sql"
 	"time"
+
+	"miaodi-agent/internal/timeutil"
 )
 
 // DailyCallStat 是按日期聚合的调用次数。
@@ -56,7 +58,7 @@ func (r *CallLogRepo) Record(channelUserID, apikey, channel, action string) erro
 	_, err := r.db.Exec(`
 		INSERT INTO api_call_log(channel_user_id, apikey, channel, action, created_at)
 		VALUES (?, ?, ?, ?, ?)`,
-		channelUserID, apikey, channel, action, time.Now())
+		channelUserID, apikey, channel, action, timeutil.Now())
 	return err
 }
 

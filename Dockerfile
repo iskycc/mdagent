@@ -26,6 +26,8 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates tzdata \
     && adduser -D -u 1000 appuser
 
+ENV TZ=Asia/Shanghai
+
 WORKDIR /app
 
 COPY --from=builder /app/miaodi-agent /app/miaodi-agent
