@@ -21,6 +21,7 @@ func TestIntentRouter_Route(t *testing.T) {
 		{name: "recent", text: "最近保存了什么 3", wantTool: "list_recent_notes"},
 		{name: "date", text: "2026-06-30 那天保存了哪些笔记", wantTool: "query_notes_by_date"},
 		{name: "bind", text: "绑定我的喵滴 key：abc123456", wantTool: "bind_miaodi_key"},
+		{name: "bind help", text: "怎么绑定", wantTool: "show_help"},
 		{name: "send email", text: "用邮箱 u@example.com 绑定喵滴", wantTool: "send_miaodi_email_code"},
 		{name: "get key", text: "查看key", wantTool: "get_miaodi_key"},
 		{name: "annual report", text: "年度报告地址", wantTool: "get_miaodi_annual_report"},
@@ -86,6 +87,33 @@ func TestIntentRouter_SendEmailArgs(t *testing.T) {
 	}
 	if runner.executedName != "send_miaodi_email_code" || args["email"] != "u@example.com" {
 		t.Fatalf("unexpected tool or args: %s %+v", runner.executedName, args)
+	}
+}
+
+func TestIntentRouter_BareEmailRoutesWhenUnbound(t *testing.T) {
+	runner := &fakeToolRunner{result: "ok"}
+	router := NewIntentRouter(runner)
+	user := &model.User{Status: userStatusUnbound}
+	_, handled := router.Route(user, "u1", 100, "u@example.com")
+	if !handled {
+		t.Fatal("expected handled intent")
+	}
+	var args map[string]string
+	if err := json.Unmarshal([]byte(runner.executedArgs), &args); err != nil {
+		t.Fatalf("bad args: %v", err)
+	}
+	if runner.executedName != "send_miaodi_email_code" || args["email"] != "u@example.com" {
+		t.Fatalf("unexpected tool or args: %s %+v", runner.executedName, args)
+	}
+}
+
+func TestIntentRouter_BareEmailDoesNotRouteWhenBound(t *testing.T) {
+	runner := &fakeToolRunner{result: "ok"}
+	router := NewIntentRouter(runner)
+	user := &model.User{Status: userStatusBound}
+	_, handled := router.Route(user, "u1", 100, "u@example.com")
+	if handled {
+		t.Fatal("expected bound bare email to go through llm")
 	}
 }
 

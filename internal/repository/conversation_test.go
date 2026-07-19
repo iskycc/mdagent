@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -9,6 +10,13 @@ import (
 
 	"miaodi-agent/pkg/openai"
 )
+
+type stringArg struct{}
+
+func (stringArg) Match(v driver.Value) bool {
+	_, ok := v.(string)
+	return ok
+}
 
 func newConversationRepoMock(t *testing.T) (*ConversationRepo, sqlmock.Sqlmock) {
 	t.Helper()
@@ -80,7 +88,9 @@ func TestConversationRepo_AppendMessage(t *testing.T) {
 	r, mock := newConversationRepoMock(t)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT messages FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnError(sql.ErrNoRows)
-	mock.ExpectExec("INSERT INTO agent_conversations").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO agent_conversations").
+		WithArgs("u1", int64(1), stringArg{}, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	if err := r.AppendMessage("u1", 1, openai.ChatMessage{Role: "user", Content: "hi"}); err != nil {

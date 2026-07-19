@@ -67,7 +67,7 @@ func (r *IntentRouter) Route(user *model.User, channelUserID string, conversatio
 	if args, ok := parseEmailCodeIntent(user, text, normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "bind_miaodi_by_email_code", toJSONString(args)), true
 	}
-	if args, ok := parseSendEmailIntent(text, normalized); ok {
+	if args, ok := parseSendEmailIntent(user, text, normalized); ok {
 		return r.toolExec.Execute(user, channelUserID, conversationID, "send_miaodi_email_code", toJSONString(args)), true
 	}
 	if args, ok := parsePathIntent(text, normalized); ok {
@@ -99,7 +99,7 @@ func normalizeIntentText(text string) string {
 
 func isHelpIntent(text string) bool {
 	switch text {
-	case "帮助", "help", "?", "？", "菜单", "使用说明", "怎么用":
+	case "帮助", "help", "?", "？", "菜单", "使用说明", "怎么用", "怎么绑定", "如何绑定", "绑定":
 		return true
 	}
 	return len([]rune(text)) <= 30 && (strings.Contains(text, "你能做什么") ||
@@ -212,12 +212,15 @@ func parseBindIntent(original, normalized string) (map[string]string, bool) {
 	return nil, false
 }
 
-func parseSendEmailIntent(original, normalized string) (map[string]string, bool) {
-	if !(strings.Contains(normalized, "邮箱") || strings.Contains(normalized, "验证码") || strings.Contains(normalized, "绑定")) {
-		return nil, false
-	}
+func parseSendEmailIntent(user *model.User, original, normalized string) (map[string]string, bool) {
 	email := emailPattern.FindString(original)
 	if email == "" {
+		return nil, false
+	}
+	hasBindingHint := strings.Contains(normalized, "邮箱") ||
+		strings.Contains(normalized, "验证码") ||
+		strings.Contains(normalized, "绑定")
+	if !hasBindingHint && user != nil && user.Status == userStatusBound {
 		return nil, false
 	}
 	return map[string]string{"email": email}, true

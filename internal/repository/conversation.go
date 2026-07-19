@@ -138,7 +138,7 @@ func (r *ConversationRepo) appendMessagesTx(channelUserID string, conversationID
 		INSERT INTO agent_conversations(channel_user_id, conversation_id, messages, updated_at)
 		VALUES (?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE messages = VALUES(messages), updated_at = VALUES(updated_at)`,
-		channelUserID, conversationID, newRaw, time.Now())
+		channelUserID, conversationID, string(newRaw), time.Now())
 	if err != nil {
 		return err
 	}

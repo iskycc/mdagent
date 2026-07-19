@@ -553,6 +553,10 @@ func (e *ToolExecutor) showHelp() string {
 - 按日期查询笔记
 - 清空当前会话
 
+绑定方式：
+- 直接发送：绑定我的喵滴 key：xxxxx
+- 或发送喵滴注册邮箱，例如：user@example.com，然后再回复收到的验证码
+
 你可以直接用自然语言告诉我你想做什么。`
 }
 
