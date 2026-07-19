@@ -1,0 +1,42 @@
+# Binary
+miaodi-agent
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime data
+logs/
+redis-data/
+
+# Config (may contain secrets)
+config.yaml
+config.yml
+config.json
+config.toml
+
+# Environment
+.env
+.env.*
+!.env.example

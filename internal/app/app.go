@@ -1,0 +1,95 @@
+package app
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log"
+	"net/http"
+	"time"
+
+	"miaodi-agent/internal/config"
+	"miaodi-agent/internal/handler"
+	"miaodi-agent/internal/repository"
+	"miaodi-agent/internal/service"
+	"miaodi-agent/pkg/client"
+	"miaodi-agent/pkg/openai"
+)
+
+// Run 启动应用，阻塞直到 ctx 被取消
+func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
+	if err := initRepos(db); err != nil {
+		return fmt.Errorf("init repositories failed: %w", err)
+	}
+
+	miaodi := client.NewMiaodiClient()
+	llm := openai.NewClient(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL)
+	llm.SetTimeout(8 * time.Second)
+
+	userRepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	pendingRepo := repository.NewPendingImageRepo(db)
+	callLogRepo := repository.NewCallLogRepo(db)
+
+	toolExec := service.NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, callLogRepo)
+	agent := service.NewAgentWithOptions(llm, cfg.OpenAIModel, userRepo, convRepo, toolExec, service.AgentOptions{
+		ModelMaxTokens:  cfg.ModelMaxTokens,
+		MaxOutputTokens: cfg.MaxOutputTokens,
+	})
+	callbackHandler := handler.NewCallbackHandler(agent)
+
+	statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo)
+	statsHandler := handler.NewStatsHandler(statsSvc)
+
+	mux := http.NewServeMux()
+	callbackHandler.RegisterRoutes(mux, cfg.CallbackPath)
+	statsHandler.RegisterRoutes(mux)
+
+	addr := ":" + cfg.Port
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("miaodi-agent listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("listen failed: %v", err)
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+	case err := <-serverErr:
+		return fmt.Errorf("listen failed: %w", err)
+	}
+	log.Println("shutting down server...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+	log.Println("server exited")
+	return nil
+}
+
+func initRepos(db *sql.DB) error {
+	repos := []struct {
+		name string
+		fn   func() error
+	}{
+		{"agent_users", repository.NewUserRepo(db).EnsureTable},
+		{"agent_conversations", repository.NewConversationRepo(db).EnsureTable},
+		{"pending_images", repository.NewPendingImageRepo(db).EnsureTable},
+		{"api_call_log", repository.NewCallLogRepo(db).EnsureTable},
+	}
+	for _, r := range repos {
+		if err := r.fn(); err != nil {
+			return fmt.Errorf("ensure table %s failed: %w", r.name, err)
+		}
+	}
+	return nil
+}

@@ -1,0 +1,47 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: miaodi-agent-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:-miaodi_pass}
+      MYSQL_DATABASE: ${DB_NAME:-miaodi_agent}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p\"$${MYSQL_ROOT_PASSWORD}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: miaodi-agent
+    restart: unless-stopped
+    environment:
+      PORT: ${PORT:-8080}
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER:-root}
+      DB_PASS: ${DB_PASS:-miaodi_pass}
+      DB_NAME: ${DB_NAME:-miaodi_agent}
+      DB_MAX_OPEN: ${DB_MAX_OPEN:-50}
+      DB_MAX_IDLE: ${DB_MAX_IDLE:-10}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-chat}
+      OPENAI_MODEL_MAX_TOKENS: ${OPENAI_MODEL_MAX_TOKENS:-8192}
+      OPENAI_MAX_OUTPUT_TOKENS: ${OPENAI_MAX_OUTPUT_TOKENS:-1024}
+      CALLBACK_PATH: ${CALLBACK_PATH:-/callback}
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:

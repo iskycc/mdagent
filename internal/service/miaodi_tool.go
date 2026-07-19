@@ -1,0 +1,474 @@
+package service
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/repository"
+	"miaodi-agent/pkg/openai"
+)
+
+// ToolExecutor 工具执行器
+type ToolExecutor struct {
+	miaodi      MiaodiClient
+	userRepo    *repository.UserRepo
+	convRepo    ConversationStore
+	pendingRepo *repository.PendingImageRepo
+	callLogRepo *repository.CallLogRepo
+}
+
+// NewToolExecutor 创建工具执行器
+func NewToolExecutor(miaodi MiaodiClient, userRepo *repository.UserRepo, convRepo ConversationStore, pendingRepo *repository.PendingImageRepo, callLogRepo *repository.CallLogRepo) *ToolExecutor {
+	return &ToolExecutor{
+		miaodi:      miaodi,
+		userRepo:    userRepo,
+		convRepo:    convRepo,
+		pendingRepo: pendingRepo,
+		callLogRepo: callLogRepo,
+	}
+}
+
+// ToolDefinitions 返回模型可见的工具列表
+func ToolDefinitions() []openai.ToolDefinition {
+	return []openai.ToolDefinition{
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "bind_miaodi_key",
+				Description: "绑定喵滴 API Key。当用户想绑定喵滴账号或提供了一串类似 key 的字符串时调用。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"key": map[string]interface{}{
+							"type":        "string",
+							"description": "喵滴 API Key",
+						},
+					},
+					"required": []string{"key"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "set_save_path",
+				Description: "设置后续保存笔记的位置，包括书本、章节、标题。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"book": map[string]interface{}{
+							"type":        "string",
+							"description": "书本名称",
+						},
+						"chapter": map[string]interface{}{
+							"type":        "string",
+							"description": "章节名称",
+						},
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "笔记标题，为空时使用当天日期作为标题",
+						},
+					},
+					"required": []string{"book", "chapter"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "get_user_profile",
+				Description: "获取当前用户的绑定状态和保存路径。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "save_text_note",
+				Description: "把文本内容保存到喵滴笔记。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"content": map[string]interface{}{
+							"type":        "string",
+							"description": "要保存的文本内容",
+						},
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "可选标题，覆盖当前设置的标题",
+						},
+					},
+					"required": []string{"content"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "save_image_note",
+				Description: "把图片链接记录到待上传队列，等待定时任务扫描后上传到喵滴。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"image_url": map[string]interface{}{
+							"type":        "string",
+							"description": "图片 URL",
+						},
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "可选标题",
+						},
+					},
+					"required": []string{"image_url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "reset_conversation",
+				Description: "清空当前会话历史。当用户想重置对话、清空上下文、忘记刚才的对话时调用。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "show_help",
+				Description: "返回 Bot 的能力说明。当用户问你能做什么、怎么用、帮助等时调用。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "list_recent_notes",
+				Description: "列出用户最近保存的笔记摘要。当用户问最近保存了什么、最近的操作记录等时调用。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"limit": map[string]interface{}{
+							"type":        "integer",
+							"description": "返回条数，默认 5，最大 20",
+						},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "query_notes_by_date",
+				Description: "按日期查询用户保存的笔记。当用户问某一天的笔记、昨天的记录等时调用。",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"date": map[string]interface{}{
+							"type":        "string",
+							"description": "日期，格式 YYYY-MM-DD",
+						},
+					},
+					"required": []string{"date"},
+				},
+			},
+		},
+	}
+}
+
+// Execute 根据工具名和参数执行，返回给模型看的结果字符串
+func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversationID int64, name string, arguments string) string {
+	switch name {
+	case "bind_miaodi_key":
+		return e.bindMiaodiKey(user, channelUserID, arguments)
+	case "set_save_path":
+		return e.setSavePath(user, channelUserID, arguments)
+	case "get_user_profile":
+		return e.getUserProfile(user)
+	case "save_text_note":
+		return e.saveTextNote(user, channelUserID, arguments)
+	case "save_image_note":
+		return e.saveImageNote(user, channelUserID, arguments)
+	case "reset_conversation":
+		return e.resetConversation(user, channelUserID, conversationID, arguments)
+	case "show_help":
+		return e.showHelp()
+	case "list_recent_notes":
+		return e.listRecentNotes(channelUserID, arguments)
+	case "query_notes_by_date":
+		return e.queryNotesByDate(channelUserID, arguments)
+	default:
+		return fmt.Sprintf("未知工具: %s", name)
+	}
+}
+
+func (e *ToolExecutor) bindMiaodiKey(user *model.User, channelUserID, arguments string) string {
+	var args struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	if args.Key == "" {
+		return "key 不能为空"
+	}
+	if !e.miaodi.Check(args.Key) {
+		return "Key 校验失败，请检查是否正确"
+	}
+	if err := e.userRepo.UpdateAPIKeyAndStatus(channelUserID, args.Key, "bound"); err != nil {
+		return "绑定失败：数据库错误"
+	}
+	user.APIKey = args.Key
+	user.Status = "bound"
+	e.recordCall(channelUserID, args.Key, "bind_key")
+	return "绑定成功，你现在可以保存笔记和图片了"
+}
+
+func (e *ToolExecutor) setSavePath(user *model.User, channelUserID, arguments string) string {
+	var args struct {
+		Book    string `json:"book"`
+		Chapter string `json:"chapter"`
+		Title   string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	if args.Book == "" || args.Chapter == "" {
+		return "book 和 chapter 不能为空"
+	}
+	if err := e.userRepo.UpdateSavePath(channelUserID, args.Book, args.Chapter, args.Title); err != nil {
+		return "设置失败：数据库错误"
+	}
+	user.Book = args.Book
+	user.Chara = args.Chapter
+	user.Title = args.Title
+	return fmt.Sprintf("保存路径已设置：书本《%s》/ 章节《%s》/ 标题《%s》", args.Book, args.Chapter, displayTitle(args.Title))
+}
+
+func (e *ToolExecutor) getUserProfile(user *model.User) string {
+	masked := "未绑定"
+	if user.Status == "bound" && user.APIKey != "" {
+		masked = maskKey(user.APIKey)
+	}
+	return fmt.Sprintf("绑定状态：%s\n喵滴 Key：%s\n保存路径：书本《%s》/ 章节《%s》/ 标题《%s》",
+		user.Status, masked, user.Book, user.Chara, displayTitle(user.Title))
+}
+
+func (e *ToolExecutor) saveTextNote(user *model.User, channelUserID, arguments string) string {
+	if user.Status != "bound" || user.APIKey == "" {
+		return "尚未绑定喵滴 Key，请先绑定"
+	}
+	var args struct {
+		Content string `json:"content"`
+		Title   string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	if args.Content == "" {
+		return "content 不能为空"
+	}
+	title := args.Title
+	if title == "" {
+		title = getNowTitle(user.Title)
+	}
+	res, err := e.miaodi.PutText(user.APIKey, user.Book, user.Chara, title, args.Content)
+	if err != nil {
+		e.recordCall(channelUserID, user.APIKey, "put_text_failed")
+		return fmt.Sprintf("保存失败：%v", err)
+	}
+	if code, ok := res["code"].(float64); ok && code == 20000 {
+		e.recordCall(channelUserID, user.APIKey, "put_text")
+		return fmt.Sprintf("已保存到：书本《%s》/ 章节《%s》/ 标题《%s》", user.Book, user.Chara, title)
+	}
+	msg := ""
+	if m, ok := res["message"].(string); ok {
+		msg = m
+	}
+	e.recordCall(channelUserID, user.APIKey, "put_text_failed")
+	return fmt.Sprintf("保存失败：%s", msg)
+}
+
+func (e *ToolExecutor) saveImageNote(user *model.User, channelUserID, arguments string) string {
+	if user.Status != "bound" || user.APIKey == "" {
+		return "尚未绑定喵滴 Key，请先绑定"
+	}
+	var args struct {
+		ImageURL string `json:"image_url"`
+		Title    string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	if args.ImageURL == "" {
+		return "image_url 不能为空"
+	}
+	title := args.Title
+	if title == "" {
+		title = getNowTitle(user.Title)
+	}
+	if err := e.pendingRepo.Insert(user.APIKey, args.ImageURL, user.Book, user.Chara, title); err != nil {
+		return fmt.Sprintf("图片落库失败：%v", err)
+	}
+	e.recordCall(channelUserID, user.APIKey, "save_image_pending")
+	return fmt.Sprintf("图片已加入待上传队列：%s，等待后台扫描上传到喵滴", args.ImageURL)
+}
+
+func (e *ToolExecutor) resetConversation(user *model.User, channelUserID string, conversationID int64, arguments string) string {
+	if e.convRepo == nil {
+		return "重置失败：会话仓库未初始化"
+	}
+	if err := e.convRepo.Clear(channelUserID, conversationID); err != nil {
+		return fmt.Sprintf("重置失败：%v", err)
+	}
+	return "已清空当前会话，我们可以重新开始。"
+}
+
+func (e *ToolExecutor) showHelp() string {
+	return `我是喵滴 AI 助手，可以帮你：
+- 绑定喵滴 API Key
+- 设置保存路径（书/章/标题）
+- 保存文本笔记
+- 保存图片到待上传队列
+- 查看当前绑定状态和路径
+- 查询最近保存的笔记
+- 按日期查询笔记
+- 清空当前会话
+
+你可以直接用自然语言告诉我你想做什么。`
+}
+
+func (e *ToolExecutor) listRecentNotes(channelUserID, arguments string) string {
+	if e.callLogRepo == nil {
+		return "查询失败：日志仓库未初始化"
+	}
+	var args struct {
+		Limit int `json:"limit"`
+	}
+	_ = json.Unmarshal([]byte(arguments), &args)
+	logs, err := e.callLogRepo.RecentByUser(channelUserID, args.Limit)
+	if err != nil {
+		return fmt.Sprintf("查询失败：%v", err)
+	}
+	var sb strings.Builder
+	count := 0
+	for _, log := range logs {
+		if !isNoteAction(log.Action) {
+			continue
+		}
+		if count == 0 {
+			sb.WriteString("最近保存记录：\n")
+		}
+		sb.WriteString(fmt.Sprintf("- %s %s\n", formatLogTime(log.CreatedAt), formatAction(log.Action)))
+		count++
+	}
+	if count == 0 {
+		return "最近没有保存记录。"
+	}
+	return sb.String()
+}
+
+func (e *ToolExecutor) queryNotesByDate(channelUserID, arguments string) string {
+	if e.callLogRepo == nil {
+		return "查询失败：日志仓库未初始化"
+	}
+	var args struct {
+		Date string `json:"date"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "参数解析失败"
+	}
+	if args.Date == "" {
+		return "date 不能为空"
+	}
+	logs, err := e.callLogRepo.ByDate(channelUserID, args.Date)
+	if err != nil {
+		return fmt.Sprintf("查询失败：%v", err)
+	}
+	var sb strings.Builder
+	count := 0
+	for _, log := range logs {
+		if !isNoteAction(log.Action) {
+			continue
+		}
+		if count == 0 {
+			sb.WriteString(fmt.Sprintf("%s 的保存记录：\n", args.Date))
+		}
+		sb.WriteString(fmt.Sprintf("- %s %s\n", formatLogTime(log.CreatedAt), formatAction(log.Action)))
+		count++
+	}
+	if count == 0 {
+		return fmt.Sprintf("%s 没有保存记录。", args.Date)
+	}
+	return sb.String()
+}
+
+// formatAction 把 api_call_log 中的 action 翻译为面向用户的中文标签
+func formatAction(action string) string {
+	switch action {
+	case "put_text":
+		return "文本笔记"
+	case "save_image_pending":
+		return "图片笔记"
+	case "put_text_failed":
+		return "文本保存失败"
+	case "save_image_failed":
+		return "图片保存失败"
+	case "bind_key":
+		return "绑定 Key"
+	default:
+		return action
+	}
+}
+
+// isNoteAction 判断 action 是否属于笔记相关操作
+func isNoteAction(action string) bool {
+	switch action {
+	case "put_text", "save_image_pending", "put_text_failed", "save_image_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *ToolExecutor) recordCall(channelUserID, apikey, action string) {
+	if e.callLogRepo != nil {
+		_ = e.callLogRepo.Record(channelUserID, apikey, "miaodi", action)
+	}
+}
+
+func getNowTitle(title string) string {
+	if title == "" || title == "null" {
+		return time.Now().Format("2006-01-02")
+	}
+	return title
+}
+
+func displayTitle(title string) string {
+	if title == "" {
+		return time.Now().Format("2006-01-02") + "（默认）"
+	}
+	return title
+}
+
+func formatLogTime(t time.Time) string {
+	return t.Format("2006-01-02 15:04")
+}
+
+func maskKey(key string) string {
+	if len(key) <= 8 {
+		return "***"
+	}
+	return key[:4] + "***" + key[len(key)-4:]
+}

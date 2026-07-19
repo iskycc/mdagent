@@ -1,0 +1,106 @@
+package config
+
+import (
+	"os"
+	"testing"
+)
+
+func TestLoad_Defaults(t *testing.T) {
+	cfg := Load()
+	if cfg.Port != "8080" {
+		t.Errorf("expected default port 8080, got %s", cfg.Port)
+	}
+	if cfg.OpenAIBaseURL != "https://api.deepseek.com/v1" {
+		t.Errorf("unexpected base url: %s", cfg.OpenAIBaseURL)
+	}
+	if cfg.OpenAIModel != "deepseek-chat" {
+		t.Errorf("unexpected model: %s", cfg.OpenAIModel)
+	}
+	if cfg.DBMaxOpen != 50 {
+		t.Errorf("unexpected DBMaxOpen: %d", cfg.DBMaxOpen)
+	}
+	if cfg.ModelMaxTokens != 8192 {
+		t.Errorf("unexpected ModelMaxTokens: %d", cfg.ModelMaxTokens)
+	}
+	if cfg.MaxOutputTokens != 1024 {
+		t.Errorf("unexpected MaxOutputTokens: %d", cfg.MaxOutputTokens)
+	}
+}
+
+func TestLoad_Overrides(t *testing.T) {
+	os.Setenv("PORT", "9090")
+	os.Setenv("DB_MAX_OPEN", "100")
+	os.Setenv("OPENAI_MODEL", "gpt-4")
+	os.Setenv("OPENAI_MODEL_MAX_TOKENS", "4096")
+	os.Setenv("OPENAI_MAX_OUTPUT_TOKENS", "512")
+	defer os.Unsetenv("PORT")
+	defer os.Unsetenv("DB_MAX_OPEN")
+	defer os.Unsetenv("OPENAI_MODEL")
+	defer os.Unsetenv("OPENAI_MODEL_MAX_TOKENS")
+	defer os.Unsetenv("OPENAI_MAX_OUTPUT_TOKENS")
+
+	cfg := Load()
+	if cfg.Port != "9090" {
+		t.Errorf("expected port 9090, got %s", cfg.Port)
+	}
+	if cfg.DBMaxOpen != 100 {
+		t.Errorf("expected DBMaxOpen 100, got %d", cfg.DBMaxOpen)
+	}
+	if cfg.OpenAIModel != "gpt-4" {
+		t.Errorf("expected model gpt-4, got %s", cfg.OpenAIModel)
+	}
+	if cfg.ModelMaxTokens != 4096 {
+		t.Errorf("expected ModelMaxTokens 4096, got %d", cfg.ModelMaxTokens)
+	}
+	if cfg.MaxOutputTokens != 512 {
+		t.Errorf("expected MaxOutputTokens 512, got %d", cfg.MaxOutputTokens)
+	}
+}
+
+func TestLoad_InvalidIntFallsBack(t *testing.T) {
+	os.Setenv("DB_MAX_OPEN", "not-a-number")
+	defer os.Unsetenv("DB_MAX_OPEN")
+	cfg := Load()
+	if cfg.DBMaxOpen != 50 {
+		t.Errorf("expected fallback 50, got %d", cfg.DBMaxOpen)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected validation error for empty config")
+	}
+	cfg.OpenAIAPIKey = "sk-test"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected validation error missing db")
+	}
+	cfg.DBUser = "root"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected validation error missing db name")
+	}
+	cfg.DBName = "test"
+	cfg.ModelMaxTokens = 8192
+	cfg.MaxOutputTokens = 1024
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("unexpected validation error: %v", err)
+	}
+	cfg.MaxOutputTokens = 8192
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected validation error for invalid token budget")
+	}
+}
+
+func TestDSN(t *testing.T) {
+	cfg := &Config{
+		DBUser: "u",
+		DBPass: "p",
+		DBHost: "h",
+		DBPort: "3306",
+		DBName: "db",
+	}
+	dsn := cfg.DSN()
+	if dsn == "" {
+		t.Error("DSN is empty")
+	}
+}
