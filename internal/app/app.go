@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"time"
 
+	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/config"
 	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/handler"
+	"miaodi-agent/internal/persist"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/internal/service"
 	"miaodi-agent/internal/timeutil"
@@ -34,11 +36,20 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	callLogRepo := repository.NewCallLogRepo(db)
 	startConversationCleanup(ctx, convRepo)
 
-	toolExec := service.NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, callLogRepo)
+	redisAddr := cfg.RedisHost + ":" + cfg.RedisPort
+	redisCache := cache.NewRedisCache(redisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisEnabled)
+	persistQueue := persist.NewPersistQueue(convRepo, callLogRepo, 1024)
+	persistQueue.Run(ctx)
+
+	if err := seedCache(ctx, redisCache, convRepo, userRepo); err != nil {
+		log.Printf("seed cache failed: %v", err)
+	}
+
+	toolExec := service.NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, callLogRepo, redisCache, persistQueue)
 	agent := service.NewAgentWithOptions(llm, cfg.OpenAIModel, userRepo, convRepo, toolExec, service.AgentOptions{
 		ModelMaxTokens:  cfg.ModelMaxTokens,
 		MaxOutputTokens: cfg.MaxOutputTokens,
-	})
+	}, redisCache, persistQueue)
 	callbackHandler := handler.NewCallbackHandler(agent)
 
 	statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo)
@@ -72,6 +83,9 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if err := persistQueue.Flush(shutdownCtx); err != nil {
+		log.Printf("flush persist queue failed: %v", err)
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server forced to shutdown: %w", err)
 	}
@@ -100,6 +114,39 @@ func startConversationCleanup(ctx context.Context, convRepo *repository.Conversa
 			}
 		}
 	}()
+}
+
+func seedCache(ctx context.Context, c cache.Cache, convRepo *repository.ConversationRepo, userRepo *repository.UserRepo) error {
+	if !c.Available(ctx) {
+		return fmt.Errorf("redis not available")
+	}
+	conversations, err := convRepo.ListActiveSince(timeutil.Now().Add(-24 * time.Hour))
+	if err != nil {
+		return err
+	}
+
+	userIDSet := make(map[string]struct{})
+	for _, conv := range conversations {
+		userIDSet[conv.ChannelUserID] = struct{}{}
+	}
+
+	for uid := range userIDSet {
+		user, err := userRepo.Get(uid)
+		if err != nil {
+			log.Printf("seed cache get user %s failed: %v", uid, err)
+			continue
+		}
+		if err := c.SetUser(ctx, user); err != nil {
+			log.Printf("seed cache set user %s failed: %v", uid, err)
+		}
+	}
+
+	for _, conv := range conversations {
+		if err := c.SetMessages(ctx, conv.ChannelUserID, conv.ConversationID, conv.Messages); err != nil {
+			log.Printf("seed cache set conv %s/%d failed: %v", conv.ChannelUserID, conv.ConversationID, err)
+		}
+	}
+	return nil
 }
 
 func initRepos(db *sql.DB) error {

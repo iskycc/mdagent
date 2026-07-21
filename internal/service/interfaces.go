@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/repository"
 	"miaodi-agent/pkg/openai"
 )
 
@@ -28,6 +29,14 @@ type ConversationStore interface {
 // ToolRunner 是 Agent 调用业务工具的接口。
 type ToolRunner interface {
 	Execute(user *model.User, channelUserID string, conversationID int64, name, arguments string) string
+}
+
+// PersistQueue 是异步持久化队列接口。
+type PersistQueue interface {
+	EnqueueConv(ctx context.Context, channelUserID string, conversationID int64, msgs []repository.StoredChatMessage)
+	EnqueueLog(ctx context.Context, channelUserID, apikey, channel, action string)
+	Run(ctx context.Context)
+	Flush(ctx context.Context) error
 }
 
 // MiaodiClient 是工具执行器需要的喵滴客户端接口
