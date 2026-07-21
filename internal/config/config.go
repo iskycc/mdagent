@@ -22,6 +22,11 @@ type Config struct {
 	ModelMaxTokens  int
 	MaxOutputTokens int
 	CallbackPath    string
+	RedisHost       string
+	RedisPort       string
+	RedisPassword   string
+	RedisDB         int
+	RedisEnabled    bool
 }
 
 // Load 从环境变量加载配置
@@ -41,6 +46,11 @@ func Load() *Config {
 		ModelMaxTokens:  getEnvInt("OPENAI_MODEL_MAX_TOKENS", 8192),
 		MaxOutputTokens: getEnvInt("OPENAI_MAX_OUTPUT_TOKENS", 1024),
 		CallbackPath:    getEnv("CALLBACK_PATH", "/callback"),
+		RedisHost:       getEnv("REDIS_HOST", "localhost"),
+		RedisPort:       getEnv("REDIS_PORT", "6379"),
+		RedisPassword:   getEnv("REDIS_PASSWORD", ""),
+		RedisDB:         getEnvInt("REDIS_DB", 0),
+		RedisEnabled:    getEnvBool("REDIS_ENABLED", true),
 	}
 }
 
@@ -67,6 +77,18 @@ func getEnvInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return n
+}
+
+func getEnvBool(key string, defaultVal bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return defaultVal
+	}
+	return b
 }
 
 // Validate 检查必填配置
