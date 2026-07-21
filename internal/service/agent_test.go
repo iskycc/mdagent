@@ -6,9 +6,26 @@ import (
 	"strings"
 	"testing"
 
+	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/repository"
 	"miaodi-agent/pkg/openai"
 )
+
+type nopPersistQueue struct{}
+
+func (nopPersistQueue) EnqueueConv(context.Context, string, int64, []repository.StoredChatMessage) {}
+func (nopPersistQueue) EnqueueLog(context.Context, string, string, string, string)             {}
+func (nopPersistQueue) Run(context.Context)                                                    {}
+func (nopPersistQueue) Flush(context.Context) error                                            { return nil }
+
+func newTestAgent(llm LLMClient, userStore UserStore, convStore ConversationStore, toolRunner ToolRunner) *Agent {
+	return NewAgent(llm, "model", userStore, convStore, toolRunner, cache.NopCache{}, nopPersistQueue{})
+}
+
+func newTestAgentWithOptions(llm LLMClient, userStore UserStore, convStore ConversationStore, toolRunner ToolRunner, opts AgentOptions) *Agent {
+	return NewAgentWithOptions(llm, "model", userStore, convStore, toolRunner, opts, cache.NopCache{}, nopPersistQueue{})
+}
 
 type fakeUserStore struct {
 	user *model.User
@@ -131,7 +148,7 @@ func makeToolResponse(name, args string) *openai.ChatCompletionResponse {
 
 func TestAgent_ProcessMessage_FinalReply(t *testing.T) {
 	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("你好")}}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, &fakeToolRunner{})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, &fakeToolRunner{})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "你好" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -143,7 +160,7 @@ func TestAgent_ProcessMessage_LocalIntentBypassesLLM(t *testing.T) {
 	runner := &fakeToolRunner{result: "帮助内容"}
 	payload := newTestPayload()
 	payload.Message.Content = "帮助"
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
 
 	reply := agent.ProcessMessage(context.Background(), payload)
 
@@ -165,7 +182,7 @@ func TestAgent_ProcessMessage_UsesConfiguredTokenBudget(t *testing.T) {
 			{Role: "user", Content: strings.Repeat("旧消息", 3000)},
 		},
 	}
-	agent := NewAgentWithOptions(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, &fakeToolRunner{}, AgentOptions{
+	agent := newTestAgentWithOptions(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, &fakeToolRunner{}, AgentOptions{
 		ModelMaxTokens:  1200,
 		MaxOutputTokens: 128,
 	})
@@ -188,7 +205,7 @@ func TestAgent_ProcessMessage_ToolCallThenReply(t *testing.T) {
 		makeToolResponse("get_user_profile", "{}"),
 		makeTextResponse("done"),
 	}}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, &fakeToolRunner{result: "ok"})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, &fakeToolRunner{result: "ok"})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "done" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -200,7 +217,7 @@ func TestAgent_ProcessMessage_ToolCallThenReply(t *testing.T) {
 
 func TestAgent_ProcessMessage_EmptyChoices(t *testing.T) {
 	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{{Choices: nil}}}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "AI 没有返回任何内容" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -209,7 +226,7 @@ func TestAgent_ProcessMessage_EmptyChoices(t *testing.T) {
 
 func TestAgent_ProcessMessage_LLMError(t *testing.T) {
 	llm := &fakeLLM{err: errors.New("timeout")}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "AI 调用失败：timeout" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -217,8 +234,8 @@ func TestAgent_ProcessMessage_LLMError(t *testing.T) {
 }
 
 func TestAgent_ProcessMessage_UserError(t *testing.T) {
-	agent := NewAgent(
-		&fakeLLM{}, "model",
+	agent := newTestAgent(
+		&fakeLLM{},
 		&fakeUserStore{err: errors.New("db error")},
 		&fakeConversationStore{}, &fakeToolRunner{})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
@@ -229,7 +246,7 @@ func TestAgent_ProcessMessage_UserError(t *testing.T) {
 
 func TestAgent_ProcessMessage_ContextTimeout(t *testing.T) {
 	llm := &fakeLLM{}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	reply := agent.ProcessMessage(ctx, newTestPayload())
@@ -244,7 +261,7 @@ func TestAgent_ProcessMessage_TooManyToolRounds(t *testing.T) {
 		makeToolResponse("get_user_profile", "{}"),
 		makeToolResponse("get_user_profile", "{}"),
 	}}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{result: "ok"})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{}}, &fakeConversationStore{}, &fakeToolRunner{result: "ok"})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "工具调用轮数超过限制，请简化请求" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -254,7 +271,7 @@ func TestAgent_ProcessMessage_TooManyToolRounds(t *testing.T) {
 func TestAgent_ProcessMessage_GetMessagesError(t *testing.T) {
 	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("ok")}}
 	store := &fakeConversationStore{err: errors.New("db error")}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, &fakeToolRunner{})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, &fakeToolRunner{})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "ok" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -264,7 +281,7 @@ func TestAgent_ProcessMessage_GetMessagesError(t *testing.T) {
 func TestAgent_ProcessMessage_AppendMessageError(t *testing.T) {
 	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("ok")}}
 	store := &fakeConversationStore{errOnAppend: true}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, &fakeToolRunner{})
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, &fakeToolRunner{})
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "ok" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -284,7 +301,7 @@ func TestAgent_ProcessMessage_ResetTool(t *testing.T) {
 	}}
 	store := &fakeConversationStore{}
 	runner := &fakeToolRunner{result: "已清空当前会话，我们可以重新开始。"}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, runner)
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, runner)
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "已清空当前会话，我们可以重新开始。" {
 		t.Errorf("unexpected reply: %s", reply)
@@ -303,7 +320,7 @@ func TestAgent_ProcessMessage_HelpTool(t *testing.T) {
 		makeTextResponse("我可以帮你..."),
 	}}
 	runner := &fakeToolRunner{result: "帮助内容"}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "我可以帮你..." {
 		t.Errorf("unexpected reply: %s", reply)
@@ -322,7 +339,7 @@ func TestAgent_ProcessMessage_ListRecentNotesTool(t *testing.T) {
 		makeTextResponse("最近你保存了..."),
 	}}
 	runner := &fakeToolRunner{result: "最近记录"}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "最近你保存了..." {
 		t.Errorf("unexpected reply: %s", reply)
@@ -341,7 +358,7 @@ func TestAgent_ProcessMessage_QueryNotesByDateTool(t *testing.T) {
 		makeTextResponse("那天的记录是..."),
 	}}
 	runner := &fakeToolRunner{result: "日期记录"}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
 	reply := agent.ProcessMessage(context.Background(), newTestPayload())
 	if reply != "那天的记录是..." {
 		t.Errorf("unexpected reply: %s", reply)
@@ -360,7 +377,7 @@ func TestAgent_ProcessMessage_ResetTool_DoesNotPersist(t *testing.T) {
 	}}
 	store := &fakeConversationStore{}
 	runner := &fakeToolRunner{result: "已清空当前会话，我们可以重新开始。"}
-	agent := NewAgent(llm, "model", &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, runner)
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, runner)
 	agent.ProcessMessage(context.Background(), newTestPayload())
 
 	// reset_conversation 是终止操作：返回结果后直接结束，本轮的 assistant 与 tool

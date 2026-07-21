@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 
+	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/model"
+	"miaodi-agent/internal/repository"
 	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/openai"
 )
@@ -33,15 +35,17 @@ type Agent struct {
 	intentRouter    *IntentRouter
 	modelMaxTokens  int
 	maxOutputTokens int
+	cache           cache.Cache
+	persistQueue    PersistQueue
 }
 
 // NewAgent 创建 Agent
-func NewAgent(llm LLMClient, modelName string, userRepo UserStore, convRepo ConversationStore, toolExec ToolRunner) *Agent {
-	return NewAgentWithOptions(llm, modelName, userRepo, convRepo, toolExec, AgentOptions{})
+func NewAgent(llm LLMClient, modelName string, userRepo UserStore, convRepo ConversationStore, toolExec ToolRunner, c cache.Cache, pq PersistQueue) *Agent {
+	return NewAgentWithOptions(llm, modelName, userRepo, convRepo, toolExec, AgentOptions{}, c, pq)
 }
 
 // NewAgentWithOptions 创建带资源预算的 Agent。
-func NewAgentWithOptions(llm LLMClient, modelName string, userRepo UserStore, convRepo ConversationStore, toolExec ToolRunner, opts AgentOptions) *Agent {
+func NewAgentWithOptions(llm LLMClient, modelName string, userRepo UserStore, convRepo ConversationStore, toolExec ToolRunner, opts AgentOptions, c cache.Cache, pq PersistQueue) *Agent {
 	if opts.ModelMaxTokens <= 0 {
 		opts.ModelMaxTokens = defaultModelMaxTokens
 	}
@@ -64,6 +68,8 @@ func NewAgentWithOptions(llm LLMClient, modelName string, userRepo UserStore, co
 		intentRouter:    NewIntentRouter(toolExec),
 		modelMaxTokens:  opts.ModelMaxTokens,
 		maxOutputTokens: opts.MaxOutputTokens,
+		cache:           c,
+		persistQueue:    pq,
 	}
 }
 
@@ -73,10 +79,16 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 	conversationID := payload.Conversation.ID
 	debuglog.Printf("agent process start user=%s conversation=%d message_id=%d content=%q", channelUserID, conversationID, payload.Message.ID, payload.Message.Content)
 
-	user, err := a.userRepo.GetOrCreate(channelUserID)
+	user, err := a.cache.GetUser(ctx, channelUserID)
 	if err != nil {
-		log.Printf("get or create user failed: %v", err)
-		return a.debugReturn("agent user load failed", "系统内部错误，请稍后再试")
+		user, err = a.userRepo.GetOrCreate(channelUserID)
+		if err != nil {
+			log.Printf("get or create user failed: %v", err)
+			return a.debugReturn("agent user load failed", "系统内部错误，请稍后再试")
+		}
+		if setErr := a.cache.SetUser(ctx, user); setErr != nil {
+			debuglog.Printf("cache set user failed user=%s error=%v", channelUserID, setErr)
+		}
 	}
 	debuglog.Printf("agent user loaded user=%s status=%s book=%q chapter=%q title=%q", channelUserID, user.Status, user.Book, user.Chara, user.Title)
 
@@ -87,19 +99,32 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 
 	// 追加用户消息到历史
 	userMsg := openai.ChatMessage{Role: "user", Content: payload.Message.Content}
-	if err := a.convRepo.AppendMessage(channelUserID, conversationID, userMsg); err != nil {
-		log.Printf("append user message failed: %v", err)
-		debuglog.Printf("agent append user message failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+	storedUserMsg := repository.ChatMessageToStored(userMsg, timeutil.Now())
+	if err := a.cache.AppendMessages(ctx, channelUserID, conversationID, storedUserMsg); err != nil {
+		log.Printf("append user message to cache failed: %v", err)
+		debuglog.Printf("agent append user message to cache failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+		if dbErr := a.convRepo.AppendMessage(channelUserID, conversationID, userMsg); dbErr != nil {
+			log.Printf("append user message to db fallback failed: %v", dbErr)
+			debuglog.Printf("agent append user message fallback failed user=%s conversation=%d error=%v", channelUserID, conversationID, dbErr)
+		}
 	} else {
+		a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, []repository.StoredChatMessage{storedUserMsg})
 		debuglog.Printf("agent appended user message user=%s conversation=%d", channelUserID, conversationID)
 	}
 
-	history, err := a.convRepo.GetMessages(channelUserID, conversationID)
+	historyStored, err := a.cache.GetMessages(ctx, channelUserID, conversationID)
 	if err != nil {
-		log.Printf("get messages failed: %v", err)
-		debuglog.Printf("agent get history failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
-		history = []openai.ChatMessage{}
+		debuglog.Printf("agent cache get history failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+		history, err := a.convRepo.GetMessages(channelUserID, conversationID)
+		if err != nil {
+			log.Printf("get messages failed: %v", err)
+			debuglog.Printf("agent get history failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+			history = []openai.ChatMessage{}
+		}
+		_ = a.cache.SetMessages(ctx, channelUserID, conversationID, repository.ChatMessagesToStored(history, timeutil.Now()))
+		historyStored = repository.ChatMessagesToStored(history, timeutil.Now())
 	}
+	history := repository.StoredToChatMessages(historyStored)
 	debuglog.Printf("agent history loaded user=%s conversation=%d messages=%d", channelUserID, conversationID, len(history))
 
 	systemMsg := openai.ChatMessage{
@@ -148,9 +173,15 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 
 		if choice.FinishReason != "tool_calls" && len(assistantMsg.ToolCalls) == 0 {
 			// 最终回复
-			if err := a.convRepo.AppendMessage(channelUserID, conversationID, assistantMsg); err != nil {
-				log.Printf("append assistant message failed: %v", err)
-				debuglog.Printf("agent append assistant message failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+			storedAssistantMsg := repository.ChatMessageToStored(assistantMsg, timeutil.Now())
+			if err := a.cache.AppendMessages(ctx, channelUserID, conversationID, storedAssistantMsg); err != nil {
+				log.Printf("append assistant message to cache failed: %v", err)
+				debuglog.Printf("agent append assistant message to cache failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+				if dbErr := a.convRepo.AppendMessage(channelUserID, conversationID, assistantMsg); dbErr != nil {
+					log.Printf("append assistant message fallback failed: %v", dbErr)
+				}
+			} else {
+				a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, []repository.StoredChatMessage{storedAssistantMsg})
 			}
 			if assistantMsg.Content == "" {
 				return a.debugReturn("agent empty assistant content", "收到空回复")
@@ -188,11 +219,17 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 		messages = append(messages, toolResults...)
 
 		// 持久化到数据库
-		if err := a.convRepo.AppendMessages(channelUserID, conversationID, append([]openai.ChatMessage{assistantMsg}, toolResults...)...); err != nil {
-			log.Printf("append tool round messages failed: %v", err)
-			debuglog.Printf("agent append tool round failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+		roundMsgs := append([]openai.ChatMessage{assistantMsg}, toolResults...)
+		storedRoundMsgs := repository.ChatMessagesToStored(roundMsgs, timeutil.Now())
+		if err := a.cache.AppendMessages(ctx, channelUserID, conversationID, storedRoundMsgs...); err != nil {
+			log.Printf("append tool round messages to cache failed: %v", err)
+			debuglog.Printf("agent append tool round to cache failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+			if dbErr := a.convRepo.AppendMessages(channelUserID, conversationID, roundMsgs...); dbErr != nil {
+				log.Printf("append tool round fallback failed: %v", dbErr)
+			}
 		} else {
-			debuglog.Printf("agent appended tool round user=%s conversation=%d messages=%d", channelUserID, conversationID, 1+len(toolResults))
+			a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, storedRoundMsgs)
+			debuglog.Printf("agent appended tool round user=%s conversation=%d messages=%d", channelUserID, conversationID, len(roundMsgs))
 		}
 	}
 
