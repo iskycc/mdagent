@@ -7,6 +7,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
+	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
 )
@@ -52,7 +53,7 @@ func newToolExecutorMock(t *testing.T) (*ToolExecutor, sqlmock.Sqlmock) {
 	pendingRepo := repository.NewPendingImageRepo(db)
 	logRepo := repository.NewCallLogRepo(db)
 	miaodi := &fakeMiaodi{checkResult: true, putResult: map[string]interface{}{"code": 20000}}
-	return NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, logRepo), mock
+	return NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, logRepo, cache.NopCache{}, nopPersistQueue{}), mock
 }
 
 func TestToolExecutor_bindMiaodiKey_Success(t *testing.T) {

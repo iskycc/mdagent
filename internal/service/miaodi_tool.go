@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
+	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
@@ -24,21 +26,25 @@ var validEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
 // ToolExecutor 工具执行器
 type ToolExecutor struct {
-	miaodi      MiaodiClient
-	userRepo    *repository.UserRepo
-	convRepo    ConversationStore
-	pendingRepo *repository.PendingImageRepo
-	callLogRepo *repository.CallLogRepo
+	miaodi       MiaodiClient
+	userRepo     *repository.UserRepo
+	convRepo     ConversationStore
+	pendingRepo  *repository.PendingImageRepo
+	callLogRepo  *repository.CallLogRepo
+	cache        cache.Cache
+	persistQueue PersistQueue
 }
 
 // NewToolExecutor 创建工具执行器
-func NewToolExecutor(miaodi MiaodiClient, userRepo *repository.UserRepo, convRepo ConversationStore, pendingRepo *repository.PendingImageRepo, callLogRepo *repository.CallLogRepo) *ToolExecutor {
+func NewToolExecutor(miaodi MiaodiClient, userRepo *repository.UserRepo, convRepo ConversationStore, pendingRepo *repository.PendingImageRepo, callLogRepo *repository.CallLogRepo, c cache.Cache, pq PersistQueue) *ToolExecutor {
 	return &ToolExecutor{
-		miaodi:      miaodi,
-		userRepo:    userRepo,
-		convRepo:    convRepo,
-		pendingRepo: pendingRepo,
-		callLogRepo: callLogRepo,
+		miaodi:       miaodi,
+		userRepo:     userRepo,
+		convRepo:     convRepo,
+		pendingRepo:  pendingRepo,
+		callLogRepo:  callLogRepo,
+		cache:        c,
+		persistQueue: pq,
 	}
 }
 
@@ -342,6 +348,9 @@ func (e *ToolExecutor) bindMiaodiKey(user *model.User, channelUserID, arguments 
 	}
 	user.APIKey = args.Key
 	user.Status = userStatusBound
+	if err := e.cache.SetUser(context.Background(), user); err != nil {
+		debuglog.Printf("bind key cache set failed user=%s error=%v", channelUserID, err)
+	}
 	e.recordCall(channelUserID, args.Key, "bind_key")
 	return "绑定成功，你现在可以保存笔记和图片了"
 }
@@ -417,6 +426,9 @@ func (e *ToolExecutor) bindMiaodiByEmailCode(user *model.User, channelUserID, ar
 	user.APIKey = key
 	user.Email = email
 	user.Status = userStatusBound
+	if err := e.cache.SetUser(context.Background(), user); err != nil {
+		debuglog.Printf("bind by email cache set failed user=%s error=%v", channelUserID, err)
+	}
 	e.recordCall(channelUserID, key, "get_key")
 	return "绑定成功，你现在可以保存笔记和图片了"
 }
@@ -439,6 +451,9 @@ func (e *ToolExecutor) setSavePath(user *model.User, channelUserID, arguments st
 	user.Book = args.Book
 	user.Chara = args.Chapter
 	user.Title = args.Title
+	if err := e.cache.SetUser(context.Background(), user); err != nil {
+		debuglog.Printf("set save path cache set failed user=%s error=%v", channelUserID, err)
+	}
 	return fmt.Sprintf("保存路径已设置：书本《%s》/ 章节《%s》/ 标题《%s》", args.Book, args.Chapter, displayTitle(args.Title))
 }
 
@@ -483,6 +498,9 @@ func (e *ToolExecutor) unbindMiaodiKey(user *model.User, channelUserID string) s
 	user.APIKey = ""
 	user.Email = ""
 	user.Status = userStatusUnbound
+	if err := e.cache.SetUser(context.Background(), user); err != nil {
+		debuglog.Printf("unbind cache set failed user=%s error=%v", channelUserID, err)
+	}
 	e.recordCall(channelUserID, "", "unbind_key")
 	return "解绑成功，欢迎再次使用"
 }
@@ -551,6 +569,9 @@ func (e *ToolExecutor) resetConversation(user *model.User, channelUserID string,
 	if e.convRepo == nil {
 		return "重置失败：会话仓库未初始化"
 	}
+	if err := e.cache.ClearConversation(context.Background(), channelUserID, conversationID); err != nil {
+		debuglog.Printf("reset clear cache failed user=%s conversation=%d error=%v", channelUserID, conversationID, err)
+	}
 	if err := e.convRepo.Clear(channelUserID, conversationID); err != nil {
 		return fmt.Sprintf("重置失败：%v", err)
 	}
@@ -589,9 +610,15 @@ func (e *ToolExecutor) listRecentNotes(channelUserID, arguments string) string {
 		Limit int `json:"limit"`
 	}
 	_ = json.Unmarshal([]byte(arguments), &args)
-	logs, err := e.callLogRepo.RecentByUser(channelUserID, args.Limit)
+
+	logs, err := e.cache.GetRecentLogs(context.Background(), channelUserID)
 	if err != nil {
-		return fmt.Sprintf("查询失败：%v", err)
+		debuglog.Printf("recent logs cache miss user=%s error=%v", channelUserID, err)
+		logs, err = e.callLogRepo.RecentByUser(channelUserID, args.Limit)
+		if err != nil {
+			return fmt.Sprintf("查询失败：%v", err)
+		}
+		_ = e.cache.SetRecentLogs(context.Background(), channelUserID, logs)
 	}
 	var sb strings.Builder
 	count := 0
@@ -628,6 +655,7 @@ func (e *ToolExecutor) queryNotesByDate(channelUserID, arguments string) string 
 	if err != nil {
 		return fmt.Sprintf("查询失败：%v", err)
 	}
+	_ = e.cache.SetRecentLogs(context.Background(), channelUserID, logs)
 	var sb strings.Builder
 	count := 0
 	for _, log := range logs {
@@ -710,9 +738,17 @@ func isValidEmail(email string) bool {
 }
 
 func (e *ToolExecutor) recordCall(channelUserID, apikey, action string) {
-	if e.callLogRepo != nil {
-		_ = e.callLogRepo.Record(channelUserID, apikey, "miaodi", action)
+	if e.callLogRepo == nil {
+		return
 	}
+	ctx := context.Background()
+	log := repository.UserCallLog{Action: action, CreatedAt: timeutil.Now()}
+	if err := e.cache.AppendLog(ctx, channelUserID, log); err != nil {
+		debuglog.Printf("append log to cache failed user=%s action=%s error=%v", channelUserID, action, err)
+		_ = e.callLogRepo.Record(channelUserID, apikey, "miaodi", action)
+		return
+	}
+	e.persistQueue.EnqueueLog(ctx, channelUserID, apikey, "miaodi", action)
 }
 
 func getNowTitle(title string) string {
