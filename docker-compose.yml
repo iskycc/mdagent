@@ -3,6 +3,8 @@ services:
     image: iskycc/mdagent:latest
     container_name: miaodi-agent
     restart: unless-stopped
+    depends_on:
+      - redis
     environment:
       PORT: ${PORT:-8080}
       DB_HOST: ${DB_HOST:?set remote DB_HOST}
@@ -21,5 +23,21 @@ services:
       OPENAI_MAX_OUTPUT_TOKENS: ${OPENAI_MAX_OUTPUT_TOKENS:-1024}
       OPENAI_DEBUG: ${OPENAI_DEBUG:-false}
       CALLBACK_PATH: ${CALLBACK_PATH:-/callback}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      REDIS_ENABLED: ${REDIS_ENABLED:-true}
     ports:
       - "${HOST_PORT:-8080}:8080"
+
+  redis:
+    image: redis:7-alpine
+    container_name: miaodi-agent-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
