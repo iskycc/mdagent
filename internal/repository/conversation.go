@@ -93,6 +93,23 @@ func (r *ConversationRepo) Clear(channelUserID string, conversationID int64) err
 	return err
 }
 
+// GetStoredMessages 获取会话原始存储消息（带创建时间戳），不裁剪 24 小时窗口。
+func (r *ConversationRepo) GetStoredMessages(channelUserID string, conversationID int64) ([]StoredChatMessage, error) {
+	row := r.db.QueryRow(`
+		SELECT messages, updated_at FROM agent_conversations
+		WHERE channel_user_id = ? AND conversation_id = ?`, channelUserID, conversationID)
+	var raw []byte
+	var updatedAt time.Time
+	err := row.Scan(&raw, &updatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return []StoredChatMessage{}, nil
+		}
+		return nil, err
+	}
+	return decodeStoredMessages(raw, updatedAt)
+}
+
 // GetMessages 获取会话历史（不加锁，用于读取）
 func (r *ConversationRepo) GetMessages(channelUserID string, conversationID int64) ([]openai.ChatMessage, error) {
 	row := r.db.QueryRow(`

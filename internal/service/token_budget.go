@@ -8,6 +8,7 @@ import (
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
 
+	_ "miaodi-agent/internal/service/tiktokenbpe"
 	"miaodi-agent/pkg/openai"
 )
 

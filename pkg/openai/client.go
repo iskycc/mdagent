@@ -78,6 +78,11 @@ type FunctionDef struct {
 	Parameters  map[string]interface{} `json:"parameters"`
 }
 
+// Thinking 控制 DeepSeek V4 等模型的思考模式开关。
+type Thinking struct {
+	Type string `json:"type,omitempty"`
+}
+
 // ChatCompletionRequest 请求体
 type ChatCompletionRequest struct {
 	Model       string           `json:"model"`
@@ -86,6 +91,7 @@ type ChatCompletionRequest struct {
 	ToolChoice  string           `json:"tool_choice,omitempty"`
 	MaxTokens   int              `json:"max_tokens,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
+	Thinking    *Thinking        `json:"thinking,omitempty"`
 }
 
 // ChatCompletionChoice 响应体中的 choice

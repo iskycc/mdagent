@@ -6,9 +6,25 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestChatCompletionRequest_MarshalThinking(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model:    "deepseek-v4-flash",
+		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+		Thinking: &Thinking{Type: "disabled"},
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if !strings.Contains(string(b), `"thinking":{"type":"disabled"}`) {
+		t.Errorf("expected thinking disabled in request body, got %s", string(b))
+	}
+}
 
 func TestCreateChatCompletion_NormalReply(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

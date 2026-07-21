@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"miaodi-agent/internal/timeutil"
@@ -97,9 +98,13 @@ func (r *CallLogRepo) DailyStats(days int) ([]DailyCallStat, error) {
 
 	stats := make([]DailyCallStat, 0)
 	for rows.Next() {
-		var date string
+		var raw interface{}
 		var count int
-		if err := rows.Scan(&date, &count); err != nil {
+		if err := rows.Scan(&raw, &count); err != nil {
+			return nil, err
+		}
+		date, err := parseDateValue(raw)
+		if err != nil {
 			return nil, err
 		}
 		stats = append(stats, DailyCallStat{Date: date, Count: count})
@@ -149,6 +154,21 @@ func (r *CallLogRepo) ActionStats(days int) ([]ActionCallStat, error) {
 		stats = append(stats, ActionCallStat{Action: action, Count: count})
 	}
 	return stats, rows.Err()
+}
+
+// parseDateValue 把 DATE 列的扫描结果统一转为 YYYY-MM-DD 字符串。
+// MySQL 驱动在 parseTime=true 时返回 time.Time，sqlmock 等场景可能返回 string/[]byte。
+func parseDateValue(v interface{}) (string, error) {
+	switch d := v.(type) {
+	case time.Time:
+		return d.In(timeutil.BeijingLocation()).Format("2006-01-02"), nil
+	case string:
+		return d, nil
+	case []byte:
+		return string(d), nil
+	default:
+		return "", fmt.Errorf("unsupported date type %T", v)
+	}
 }
 
 // RecentByUser 查询指定用户最近 N 条调用记录（按时间倒序）

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/debuglog"
@@ -148,6 +149,9 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 			ToolChoice: "auto",
 			MaxTokens:  a.maxOutputTokens,
 		}
+		if shouldDisableThinking(a.model) {
+			req.Thinking = &openai.Thinking{Type: "disabled"}
+		}
 		debuglog.Printf(
 			"agent llm round=%d model=%s messages_before=%d messages_sent=%d estimated_prompt_tokens=%d max_output_tokens=%d",
 			i+1,
@@ -246,6 +250,12 @@ func toToolDefinitions() []openai.ToolDefinition {
 	return ToolDefinitions()
 }
 
+func shouldDisableThinking(model string) bool {
+	// DeepSeek V4 系列默认开启思考模式，直接关闭可避免返回 reasoning_content 以及
+	// 工具调用链中必须回传 reasoning_content 的复杂处理。
+	return strings.Contains(strings.ToLower(model), "deepseek-v4")
+}
+
 func buildSystemPrompt(user *model.User) string {
 	status := "未绑定"
 	if user.Status == userStatusBound {
@@ -285,6 +295,8 @@ func buildSystemPrompt(user *model.User) string {
 - 随机选择/帮我选 -> choose_option
 - 统计字数/文本长度 -> text_stats
 - 计算 token 数/上下文长度 -> count_tokens
+- 查询当前使用的模型 -> get_current_model
+- 查询当前会话开始时间/第一条消息时间 -> get_conversation_start_time
 
 未绑定时，保存类请求先提示绑定。最终回复简洁自然，200 字以内。历史上下文只包含 24 小时内记录。`,
 		status, user.Book, user.Chara, title, timeutil.Date())

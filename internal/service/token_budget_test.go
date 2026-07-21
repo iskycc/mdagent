@@ -50,6 +50,19 @@ func TestFitMessagesForTokenBudget_TruncatesOversizedLatestMessage(t *testing.T)
 	}
 }
 
+func TestFitMessagesForTokenBudgetForModel_DeepSeekFallback(t *testing.T) {
+	messages := []openai.ChatMessage{
+		{Role: "system", Content: "system"},
+		{Role: "user", Content: "你好"},
+	}
+
+	// deepseek-v4-flash 对 tiktoken 是未知模型，应回退到 cl100k_base 且不触发网络请求。
+	got := FitMessagesForTokenBudgetForModel("deepseek-v4-flash", messages, nil, 100000, 64000)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages, got %+v", got)
+	}
+}
+
 func TestFitMessagesForTokenBudget_KeepsToolCallBlockTogether(t *testing.T) {
 	messages := []openai.ChatMessage{
 		{Role: "system", Content: "system"},

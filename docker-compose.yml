@@ -6,30 +6,29 @@ services:
     depends_on:
       - redis
     environment:
-      PORT: ${PORT:-8080}
-      DB_HOST: ${DB_HOST:?set remote DB_HOST}
-      DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${DB_USER:?set DB_USER}
-      DB_PASS: ${DB_PASS:-}
-      DB_NAME: ${DB_NAME:?set DB_NAME}
-      DB_MAX_OPEN: ${DB_MAX_OPEN:-50}
-      DB_MAX_IDLE: ${DB_MAX_IDLE:-10}
-      TZ: ${TZ:-Asia/Shanghai}
-      APP_DEBUG: ${APP_DEBUG:-false}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-chat}
-      OPENAI_MODEL_MAX_TOKENS: ${OPENAI_MODEL_MAX_TOKENS:-8192}
-      OPENAI_MAX_OUTPUT_TOKENS: ${OPENAI_MAX_OUTPUT_TOKENS:-1024}
-      OPENAI_DEBUG: ${OPENAI_DEBUG:-false}
-      CALLBACK_PATH: ${CALLBACK_PATH:-/callback}
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      REDIS_DB: ${REDIS_DB:-0}
-      REDIS_ENABLED: ${REDIS_ENABLED:-true}
+      PORT: 8735
+      DB_HOST: 119.29.21.39
+      DB_PORT: 3306
+      DB_USER: mdagent
+      DB_PASS: ${DB_PASS}
+      DB_NAME: mdagent
+      DB_MAX_OPEN: 50
+      DB_MAX_IDLE: 10
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: https://api.deepseek.com/v1
+      OPENAI_MODEL: deepseek-v4-flash
+      OPENAI_MODEL_MAX_TOKENS: 100000
+      OPENAI_MAX_OUTPUT_TOKENS: 64000
+      APP_DEBUG: "true"
+      OPENAI_DEBUG: "true"
+      CALLBACK_PATH: /webhook
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_ENABLED: "true"
+      TZ: Asia/Shanghai
     ports:
-      - "${HOST_PORT:-8080}:8080"
+      - "8735:8735"
 
   redis:
     image: redis:7-alpine

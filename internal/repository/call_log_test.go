@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"miaodi-agent/internal/timeutil"
 )
 
 func newCallLogRepoMock(t *testing.T) (*CallLogRepo, sqlmock.Sqlmock) {
@@ -65,6 +66,29 @@ func TestCallLogRepo_DailyStats(t *testing.T) {
 	}
 	if len(stats) != 2 {
 		t.Errorf("expected 2 rows, got %d", len(stats))
+	}
+}
+
+// TestCallLogRepo_DailyStats_DateFormatting 验证 DATE 类型在 parseTime=true 时被驱动
+// 解析为 time.Time，最终应格式化为 YYYY-MM-DD 字符串，而不是 time.Time 的默认格式。
+func TestCallLogRepo_DailyStats_DateFormatting(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"date", "count"}).
+		AddRow(time.Date(2026, 7, 19, 0, 0, 0, 0, timeutil.BeijingLocation()), 6)
+	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(rows)
+
+	stats, err := r.DailyStats(7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(stats))
+	}
+	if stats[0].Date != "2026-07-19" {
+		t.Errorf("expected date 2026-07-19, got %s", stats[0].Date)
+	}
+	if stats[0].Count != 6 {
+		t.Errorf("expected count 6, got %d", stats[0].Count)
 	}
 }
 

@@ -33,6 +33,7 @@ type ToolExecutor struct {
 	callLogRepo  *repository.CallLogRepo
 	cache        cache.Cache
 	persistQueue PersistQueue
+	model        string
 }
 
 // NewToolExecutor 创建工具执行器
@@ -46,6 +47,11 @@ func NewToolExecutor(miaodi MiaodiClient, userRepo *repository.UserRepo, convRep
 		cache:        c,
 		persistQueue: pq,
 	}
+}
+
+// SetModel 设置当前使用的模型名，供 get_current_model 等工具使用。
+func (e *ToolExecutor) SetModel(model string) {
+	e.model = model
 }
 
 // ToolDefinitions 返回模型可见的工具列表
@@ -323,6 +329,10 @@ func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversat
 		result = e.textStats(arguments)
 	case "count_tokens":
 		result = e.countTokens(arguments)
+	case "get_current_model":
+		result = e.getCurrentModel(arguments)
+	case "get_conversation_start_time":
+		result = e.getConversationStartTime(channelUserID, conversationID)
 	default:
 		result = fmt.Sprintf("未知工具: %s", name)
 	}

@@ -21,6 +21,7 @@ type UserStore interface {
 // ConversationStore 是 Agent 需要的会话历史存储接口。
 type ConversationStore interface {
 	GetMessages(channelUserID string, conversationID int64) ([]openai.ChatMessage, error)
+	GetStoredMessages(channelUserID string, conversationID int64) ([]repository.StoredChatMessage, error)
 	AppendMessage(channelUserID string, conversationID int64, msg openai.ChatMessage) error
 	AppendMessages(channelUserID string, conversationID int64, msgs ...openai.ChatMessage) error
 	Clear(channelUserID string, conversationID int64) error

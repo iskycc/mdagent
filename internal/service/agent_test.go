@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/model"
@@ -50,6 +51,13 @@ func (f *fakeConversationStore) GetMessages(channelUserID string, conversationID
 		return nil, f.err
 	}
 	return f.messages, nil
+}
+
+func (f *fakeConversationStore) GetStoredMessages(channelUserID string, conversationID int64) ([]repository.StoredChatMessage, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return repository.ChatMessagesToStored(f.messages, time.Now()), nil
 }
 
 func (f *fakeConversationStore) AppendMessage(channelUserID string, conversationID int64, msg openai.ChatMessage) error {
@@ -386,5 +394,30 @@ func TestAgent_ProcessMessage_ResetTool_DoesNotPersist(t *testing.T) {
 		if m.Role == "assistant" || m.Role == "tool" {
 			t.Errorf("reset tool round should not be persisted, found %s message: %+v", m.Role, m)
 		}
+	}
+}
+
+func TestAgent_ProcessMessage_DeepSeekV4_DisablesThinking(t *testing.T) {
+	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("ok")}}
+	agent := NewAgentWithOptions(
+		llm,
+		"deepseek-v4-flash",
+		&fakeUserStore{user: &model.User{ChannelUserID: "u1"}},
+		&fakeConversationStore{},
+		&fakeToolRunner{},
+		AgentOptions{},
+		cache.NopCache{},
+		nopPersistQueue{},
+	)
+
+	reply := agent.ProcessMessage(context.Background(), newTestPayload())
+	if reply != "ok" {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+	if llm.lastReq.Thinking == nil {
+		t.Fatal("expected thinking field to be set")
+	}
+	if llm.lastReq.Thinking.Type != "disabled" {
+		t.Errorf("expected thinking disabled, got %q", llm.lastReq.Thinking.Type)
 	}
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"miaodi-agent/internal/repository"
 	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/openai"
 )
@@ -144,6 +146,28 @@ func commonToolDefinitions() []openai.ToolDefinition {
 						},
 					},
 					"required": []string{"text"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "get_current_model",
+				Description: "查询当前 AI 使用的模型名称。用户问你在用什么模型、当前模型是什么时调用。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: openai.FunctionDef{
+				Name:        "get_conversation_start_time",
+				Description: "查询当前会话第一条消息的发送时间，也就是会话开始时间。用户问对话什么时候开始、最早的消息是什么时候时调用。",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
 				},
 			},
 		},
@@ -281,6 +305,40 @@ func (e *ToolExecutor) countTokens(arguments string) string {
 	tokenizer := newTokenCounter(model)
 	tokens := tokenizer.TextTokens(args.Text)
 	return fmt.Sprintf("Token 统计：%d tokens（模型/编码：%s）", tokens, tokenizer.EncodingLabel())
+}
+
+func (e *ToolExecutor) getCurrentModel(arguments string) string {
+	if e.model == "" {
+		return "当前模型：未知"
+	}
+	return fmt.Sprintf("当前模型：%s", e.model)
+}
+
+func (e *ToolExecutor) getConversationStartTime(channelUserID string, conversationID int64) string {
+	ctx := context.Background()
+	var stored []repository.StoredChatMessage
+	var err error
+
+	// 优先读缓存，缓存不可用则回源 MySQL。
+	stored, err = e.cache.GetMessages(ctx, channelUserID, conversationID)
+	if err != nil {
+		stored, err = e.convRepo.GetStoredMessages(channelUserID, conversationID)
+		if err != nil {
+			return fmt.Sprintf("获取会话历史失败：%v", err)
+		}
+	}
+
+	if len(stored) == 0 {
+		return "当前会话还没有消息"
+	}
+
+	first := stored[0]
+	for _, m := range stored {
+		if m.CreatedAt.Before(first.CreatedAt) {
+			first = m
+		}
+	}
+	return fmt.Sprintf("当前会话第一条消息时间：%s", first.CreatedAt.In(timeutil.BeijingLocation()).Format("2006-01-02 15:04:05"))
 }
 
 func parseToolLocation(name string) (*time.Location, string, error) {

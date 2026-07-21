@@ -22,6 +22,9 @@ import (
 
 // Run 启动应用，阻塞直到 ctx 被取消
 func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
+	// 防御性设置：避免某个依赖库使用 http.DefaultClient 时因无超时而永久挂住。
+	http.DefaultClient.Timeout = 30 * time.Second
+
 	if err := initRepos(db); err != nil {
 		return fmt.Errorf("init repositories failed: %w", err)
 	}
@@ -46,6 +49,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	}
 
 	toolExec := service.NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, callLogRepo, redisCache, persistQueue)
+	toolExec.SetModel(cfg.OpenAIModel)
 	agent := service.NewAgentWithOptions(llm, cfg.OpenAIModel, userRepo, convRepo, toolExec, service.AgentOptions{
 		ModelMaxTokens:  cfg.ModelMaxTokens,
 		MaxOutputTokens: cfg.MaxOutputTokens,
