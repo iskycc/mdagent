@@ -37,6 +37,46 @@ func (r *ConversationRepo) EnsureTable() error {
 	return err
 }
 
+// ConversationWithMessages 是会话 ID 与消息的聚合，用于缓存预热。
+type ConversationWithMessages struct {
+	ChannelUserID  string
+	ConversationID int64
+	Messages       []StoredChatMessage
+}
+
+// ListActiveSince 返回 updated_at 晚于 cutoff 的所有会话及消息。
+func (r *ConversationRepo) ListActiveSince(cutoff time.Time) ([]ConversationWithMessages, error) {
+	rows, err := r.db.Query(`
+		SELECT channel_user_id, conversation_id, messages, updated_at
+		FROM agent_conversations
+		WHERE updated_at >= ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []ConversationWithMessages
+	for rows.Next() {
+		var channelUserID string
+		var conversationID int64
+		var raw []byte
+		var updatedAt time.Time
+		if err := rows.Scan(&channelUserID, &conversationID, &raw, &updatedAt); err != nil {
+			return nil, err
+		}
+		stored, err := decodeStoredMessages(raw, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode conversation %s/%d failed: %w", channelUserID, conversationID, err)
+		}
+		result = append(result, ConversationWithMessages{
+			ChannelUserID:  channelUserID,
+			ConversationID: conversationID,
+			Messages:       stored,
+		})
+	}
+	return result, rows.Err()
+}
+
 // CountTotal 查询总会话数
 func (r *ConversationRepo) CountTotal() (int, error) {
 	var count int
@@ -114,13 +154,13 @@ func (r *ConversationRepo) appendMessagesTx(channelUserID string, conversationID
 		WHERE channel_user_id = ? AND conversation_id = ? FOR UPDATE`,
 		channelUserID, conversationID).Scan(&raw, &updatedAt)
 
-	var messages []storedChatMessage
+	var messages []StoredChatMessage
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		// 记录不存在，从头开始
-		messages = []storedChatMessage{}
+		messages = []StoredChatMessage{}
 	} else {
 		decoded, err := decodeStoredMessages(raw, updatedAt)
 		if err != nil {
@@ -210,13 +250,14 @@ func (r *ConversationRepo) CleanupExpiredMessages(cutoff time.Time) (int, error)
 	return removed, nil
 }
 
-type storedChatMessage struct {
+// StoredChatMessage 是会话消息的持久化/缓存格式，带创建时间戳。
+type StoredChatMessage struct {
 	openai.ChatMessage
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func decodeStoredMessages(raw []byte, fallbackTime time.Time) ([]storedChatMessage, error) {
-	var stored []storedChatMessage
+func decodeStoredMessages(raw []byte, fallbackTime time.Time) ([]StoredChatMessage, error) {
+	var stored []StoredChatMessage
 	if err := json.Unmarshal(raw, &stored); err == nil && storedMessagesHavePayload(stored) {
 		for i := range stored {
 			if stored[i].CreatedAt.IsZero() {
@@ -233,7 +274,7 @@ func decodeStoredMessages(raw []byte, fallbackTime time.Time) ([]storedChatMessa
 	return chatMessagesToStored(legacy, fallbackTime), nil
 }
 
-func storedMessagesHavePayload(messages []storedChatMessage) bool {
+func storedMessagesHavePayload(messages []StoredChatMessage) bool {
 	if len(messages) == 0 {
 		return true
 	}
@@ -245,18 +286,25 @@ func storedMessagesHavePayload(messages []storedChatMessage) bool {
 	return false
 }
 
-func chatMessagesToStored(messages []openai.ChatMessage, createdAt time.Time) []storedChatMessage {
-	stored := make([]storedChatMessage, 0, len(messages))
+// ChatMessageToStored 把单条 ChatMessage 转为 StoredChatMessage。
+func ChatMessageToStored(msg openai.ChatMessage, createdAt time.Time) StoredChatMessage {
+	return StoredChatMessage{
+		ChatMessage: msg,
+		CreatedAt:   createdAt.In(timeutil.BeijingLocation()),
+	}
+}
+
+// ChatMessagesToStored 把 ChatMessage 切片转为 StoredChatMessage 切片。
+func ChatMessagesToStored(messages []openai.ChatMessage, createdAt time.Time) []StoredChatMessage {
+	stored := make([]StoredChatMessage, 0, len(messages))
 	for _, msg := range messages {
-		stored = append(stored, storedChatMessage{
-			ChatMessage: msg,
-			CreatedAt:   createdAt.In(timeutil.BeijingLocation()),
-		})
+		stored = append(stored, ChatMessageToStored(msg, createdAt))
 	}
 	return stored
 }
 
-func storedToChatMessages(stored []storedChatMessage) []openai.ChatMessage {
+// StoredToChatMessages 把 StoredChatMessage 切片转回 ChatMessage 切片。
+func StoredToChatMessages(stored []StoredChatMessage) []openai.ChatMessage {
 	messages := make([]openai.ChatMessage, 0, len(stored))
 	for _, msg := range stored {
 		messages = append(messages, msg.ChatMessage)
@@ -264,9 +312,17 @@ func storedToChatMessages(stored []storedChatMessage) []openai.ChatMessage {
 	return messages
 }
 
-func pruneStoredMessages(messages []storedChatMessage, cutoff time.Time) []storedChatMessage {
+func chatMessagesToStored(messages []openai.ChatMessage, createdAt time.Time) []StoredChatMessage {
+	return ChatMessagesToStored(messages, createdAt)
+}
+
+func storedToChatMessages(stored []StoredChatMessage) []openai.ChatMessage {
+	return StoredToChatMessages(stored)
+}
+
+func pruneStoredMessages(messages []StoredChatMessage, cutoff time.Time) []StoredChatMessage {
 	cutoff = cutoff.In(timeutil.BeijingLocation())
-	pruned := make([]storedChatMessage, 0, len(messages))
+	pruned := make([]StoredChatMessage, 0, len(messages))
 	for _, msg := range messages {
 		if msg.CreatedAt.IsZero() || !msg.CreatedAt.Before(cutoff) {
 			pruned = append(pruned, msg)

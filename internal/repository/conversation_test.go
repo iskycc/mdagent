@@ -30,7 +30,7 @@ func (m storedMessagesLenArg) Match(v driver.Value) bool {
 	if !ok {
 		return false
 	}
-	var messages []storedChatMessage
+	var messages []StoredChatMessage
 	if err := json.Unmarshal([]byte(raw), &messages); err != nil {
 		return false
 	}
