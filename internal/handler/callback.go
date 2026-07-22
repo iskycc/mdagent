@@ -20,12 +20,13 @@ type MessageProcessor interface {
 
 // CallbackHandler 传送鸽回调处理器
 type CallbackHandler struct {
-	agent MessageProcessor
+	agent          MessageProcessor
+	callbackSecret string
 }
 
 // NewCallbackHandler 创建处理器
-func NewCallbackHandler(agent MessageProcessor) *CallbackHandler {
-	return &CallbackHandler{agent: agent}
+func NewCallbackHandler(agent MessageProcessor, callbackSecret string) *CallbackHandler {
+	return &CallbackHandler{agent: agent, callbackSecret: callbackSecret}
 }
 
 // RegisterRoutes 注册路由
@@ -55,6 +56,13 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	debuglog.Printf("callback request body=%s", string(body))
+
+	if err := validateCallbackSignature(h.callbackSecret, r, body); err != nil {
+		debuglog.Printf("callback signature invalid elapsed=%s error=%v", time.Since(start), err)
+		metrics.Record("callback_handler", time.Since(start), false)
+		writeJSON(w, http.StatusUnauthorized, model.NewErrorResponse("请求签名验证失败"))
+		return
+	}
 
 	var payload model.CallbackPayload
 	if err := json.Unmarshal(body, &payload); err != nil {

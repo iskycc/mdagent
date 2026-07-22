@@ -92,6 +92,24 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidate_ProductionRequiresCallbackSecret(t *testing.T) {
+	cfg := &Config{
+		Env:             "production",
+		OpenAIAPIKey:    "sk-test",
+		DBUser:          "root",
+		DBName:          "test",
+		ModelMaxTokens:  8192,
+		MaxOutputTokens: 1024,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for missing CALLBACK_SECRET in production")
+	}
+	cfg.CallbackSecret = "secret"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
 func TestDSN(t *testing.T) {
 	cfg := &Config{
 		DBUser: "u",

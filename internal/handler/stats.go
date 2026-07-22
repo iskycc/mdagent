@@ -18,17 +18,59 @@ type StatsProvider interface {
 // StatsHandler 统计页面处理器
 type StatsHandler struct {
 	statsSvc StatsProvider
+	token    string
 }
 
 // NewStatsHandler 创建统计处理器
-func NewStatsHandler(statsSvc StatsProvider) *StatsHandler {
-	return &StatsHandler{statsSvc: statsSvc}
+func NewStatsHandler(statsSvc StatsProvider, token string) *StatsHandler {
+	return &StatsHandler{statsSvc: statsSvc, token: token}
 }
 
 // RegisterRoutes 注册路由
 func (h *StatsHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/stats", h.handleStatsPage)
-	mux.HandleFunc("/api/stats", h.handleStatsAPI)
+	mux.HandleFunc("/stats", h.requireToken(h.handleStatsPage))
+	mux.HandleFunc("/api/stats", h.requireToken(h.handleStatsAPI))
+}
+
+// requireToken 验证 Bearer Token 或 URL 查询参数 token。
+func (h *StatsHandler) requireToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.authenticate(r) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="stats"`)
+			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (h *StatsHandler) authenticate(r *http.Request) bool {
+	// 优先 Authorization: Bearer <token>
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		const prefix = "Bearer "
+		if len(auth) > len(prefix) && auth[:len(prefix)] == prefix {
+			return h.compareToken(auth[len(prefix):])
+		}
+	}
+	// 兼容 URL 查询参数 token=<token>
+	if tok := r.URL.Query().Get("token"); tok != "" {
+		return h.compareToken(tok)
+	}
+	return false
+}
+
+func (h *StatsHandler) compareToken(tok string) bool {
+	if h.token == "" || tok == "" {
+		return false
+	}
+	if len(tok) != len(h.token) {
+		return false
+	}
+	var same byte
+	for i := 0; i < len(tok); i++ {
+		same |= tok[i] ^ h.token[i]
+	}
+	return same == 0
 }
 
 func (h *StatsHandler) handleStatsAPI(w http.ResponseWriter, r *http.Request) {

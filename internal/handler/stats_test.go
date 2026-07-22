@@ -30,12 +30,15 @@ func (f *fakeStatsProvider) ToJSON(data *service.StatsData) (string, error) {
 	return `{"total_users":10}`, nil
 }
 
+const testStatsToken = "stats-token-123"
+
 func TestHandleStatsPage(t *testing.T) {
-	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}})
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}}, testStatsToken)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testStatsToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -51,12 +54,41 @@ func TestHandleStatsPage(t *testing.T) {
 	}
 }
 
-func TestHandleStatsPage_GetStatsError(t *testing.T) {
-	h := NewStatsHandler(&fakeStatsProvider{err: errors.New("db error")})
+func TestHandleStatsPage_Unauthorized(t *testing.T) {
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}}, testStatsToken)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestHandleStatsPage_QueryToken(t *testing.T) {
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}}, testStatsToken)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/stats?token="+testStatsToken, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestHandleStatsPage_GetStatsError(t *testing.T) {
+	h := NewStatsHandler(&fakeStatsProvider{err: errors.New("db error")}, testStatsToken)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testStatsToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -66,11 +98,12 @@ func TestHandleStatsPage_GetStatsError(t *testing.T) {
 }
 
 func TestHandleStatsPage_ToJSONError(t *testing.T) {
-	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}, toJSONErr: errors.New("json error")})
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}, toJSONErr: errors.New("json error")}, testStatsToken)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testStatsToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -80,11 +113,12 @@ func TestHandleStatsPage_ToJSONError(t *testing.T) {
 }
 
 func TestHandleStatsAPI(t *testing.T) {
-	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}})
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}}, testStatsToken)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testStatsToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -98,11 +132,12 @@ func TestHandleStatsAPI(t *testing.T) {
 
 func TestHandleStatsAPI_Error(t *testing.T) {
 	h := NewStatsHandler(
-		&fakeStatsProvider{err: errors.New("db error")})
+		&fakeStatsProvider{err: errors.New("db error")}, testStatsToken)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testStatsToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -132,8 +167,9 @@ func (f *failingStatsWriter) Write([]byte) (int, error) {
 }
 
 func TestHandleStatsPage_ExecuteError(t *testing.T) {
-	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}})
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}}, testStatsToken)
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testStatsToken)
 	w := &failingStatsWriter{}
 	h.handleStatsPage(w, req)
 	if w.headers.Get("Content-Type") != "text/html; charset=utf-8" {

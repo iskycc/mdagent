@@ -19,11 +19,14 @@ services:
       OPENAI_MODEL: deepseek-v4-flash
       OPENAI_MODEL_MAX_TOKENS: 100000
       OPENAI_MAX_OUTPUT_TOKENS: 64000
-      APP_DEBUG: "true"
-      OPENAI_DEBUG: "true"
+      APP_DEBUG: "false"
+      OPENAI_DEBUG: "false"
       CALLBACK_PATH: /webhook
+      CALLBACK_SECRET: ${CALLBACK_SECRET}
+      STATS_TOKEN: ${STATS_TOKEN}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_DB: 0
       REDIS_ENABLED: "true"
       TZ: Asia/Shanghai

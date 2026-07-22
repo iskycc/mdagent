@@ -8,6 +8,7 @@ import (
 
 // Config 保存所有配置
 type Config struct {
+	Env             string
 	Port            string
 	DBHost          string
 	DBPort          string
@@ -22,6 +23,8 @@ type Config struct {
 	ModelMaxTokens  int
 	MaxOutputTokens int
 	CallbackPath    string
+	CallbackSecret  string
+	StatsToken      string
 	RedisHost       string
 	RedisPort       string
 	RedisPassword   string
@@ -32,6 +35,7 @@ type Config struct {
 // Load 从环境变量加载配置
 func Load() *Config {
 	return &Config{
+		Env:             getEnv("APP_ENV", "development"),
 		Port:            getEnv("PORT", "8080"),
 		DBHost:          getEnv("DB_HOST", "localhost"),
 		DBPort:          getEnv("DB_PORT", "3306"),
@@ -46,6 +50,8 @@ func Load() *Config {
 		ModelMaxTokens:  getEnvInt("OPENAI_MODEL_MAX_TOKENS", 8192),
 		MaxOutputTokens: getEnvInt("OPENAI_MAX_OUTPUT_TOKENS", 1024),
 		CallbackPath:    getEnv("CALLBACK_PATH", "/callback"),
+		CallbackSecret:  getEnv("CALLBACK_SECRET", ""),
+		StatsToken:      getEnv("STATS_TOKEN", ""),
 		RedisHost:       getEnv("REDIS_HOST", "localhost"),
 		RedisPort:       getEnv("REDIS_PORT", "6379"),
 		RedisPassword:   getEnv("REDIS_PASSWORD", ""),
@@ -106,7 +112,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("OPENAI_MAX_OUTPUT_TOKENS must be positive")
 	}
 	if c.MaxOutputTokens >= c.ModelMaxTokens {
-		return fmt.Errorf("OPENAI_MAX_OUTPUT_TOKENS must be less than OPENAI_MODEL_MAX_TOKENS")
+		return fmt.Errorf("OPENAI_MODEL_MAX_TOKENS must be less than OPENAI_MODEL_MAX_TOKENS")
+	}
+	if c.Env == "production" && c.CallbackSecret == "" {
+		return fmt.Errorf("CALLBACK_SECRET is required in production")
 	}
 	return nil
 }

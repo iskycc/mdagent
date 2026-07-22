@@ -95,6 +95,16 @@ func NewSuccessResponse(content string) CallbackResponse {
 	}
 }
 
+// NewErrorResponse 构造失败响应
+func NewErrorResponse(content string) CallbackResponse {
+	return CallbackResponse{
+		Success: false,
+		Reply: struct {
+			Content string `json:"content"`
+		}{Content: content},
+	}
+}
+
 // User 用户在 Agent 中的状态
 type User struct {
 	ChannelUserID string

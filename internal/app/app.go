@@ -58,14 +58,16 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 		ModelMaxTokens:  cfg.ModelMaxTokens,
 		MaxOutputTokens: cfg.MaxOutputTokens,
 	}, redisCache, persistQueue, llmCallLogRepo)
-	callbackHandler := handler.NewCallbackHandler(agent)
-
-	statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo, llmCallLogRepo)
-	statsHandler := handler.NewStatsHandler(statsSvc)
+	callbackHandler := handler.NewCallbackHandler(agent, cfg.CallbackSecret)
 
 	mux := http.NewServeMux()
 	callbackHandler.RegisterRoutes(mux, cfg.CallbackPath)
-	statsHandler.RegisterRoutes(mux)
+
+	if cfg.StatsToken != "" {
+		statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo, llmCallLogRepo)
+		statsHandler := handler.NewStatsHandler(statsSvc, cfg.StatsToken)
+		statsHandler.RegisterRoutes(mux)
+	}
 
 	addr := ":" + cfg.Port
 	srv := &http.Server{

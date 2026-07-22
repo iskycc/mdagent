@@ -127,10 +127,11 @@ func TestToolExecutor_bindMiaodiByEmailCode_MissingEmail(t *testing.T) {
 
 func TestToolExecutor_getMiaodiKey(t *testing.T) {
 	exec, _ := newToolExecutorMock(t)
-	user := &model.User{Status: userStatusBound, APIKey: "key1"}
+	user := &model.User{Status: userStatusBound, APIKey: "abcd1234xyz"}
 	res := exec.Execute(user, "u1", 1, "get_miaodi_key", `{}`)
-	if res != "key1" {
-		t.Errorf("unexpected result: %s", res)
+	want := maskKey("abcd1234xyz")
+	if res != want {
+		t.Errorf("unexpected result: %s, want %s", res, want)
 	}
 }
 

@@ -497,7 +497,7 @@ func (e *ToolExecutor) getMiaodiKey(user *model.User) string {
 	if user.Status != userStatusBound || user.APIKey == "" {
 		return "尚未绑定喵滴 Key"
 	}
-	return user.APIKey
+	return maskKey(user.APIKey)
 }
 
 func (e *ToolExecutor) getMiaodiAnnualReport(user *model.User, channelUserID string) string {
