@@ -16,7 +16,7 @@ func newTestServer(response string) (*httptest.Server, *MiaodiClient) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(response))
 	}))
-	return srv, NewMiaodiClientWithHTTP(srv.Client())
+	return srv, NewMiaodiClientWithHTTPAndEndpoints(srv.Client(), srv.URL, srv.URL, srv.URL)
 }
 
 func TestMiaodiClient_Check_True(t *testing.T) {
@@ -174,6 +174,28 @@ func TestNewMiaodiClient(t *testing.T) {
 	c := NewMiaodiClient()
 	if c.client == nil {
 		t.Error("expected http client")
+	}
+	if c.apiBaseURL != defaultAPIBaseURL {
+		t.Errorf("apiBaseURL = %q, want %q", c.apiBaseURL, defaultAPIBaseURL)
+	}
+	if c.mailURL != defaultMailURL {
+		t.Errorf("mailURL = %q, want %q", c.mailURL, defaultMailURL)
+	}
+	if c.pictureURL != defaultPictureURL {
+		t.Errorf("pictureURL = %q, want %q", c.pictureURL, defaultPictureURL)
+	}
+}
+
+func TestNewMiaodiClientWithEndpoints(t *testing.T) {
+	c := NewMiaodiClientWithEndpoints("https://api.example.com/miaodi", "https://mail.example.com", "https://pic.example.com")
+	if c.apiBaseURL != "https://api.example.com/miaodi" {
+		t.Errorf("apiBaseURL = %q", c.apiBaseURL)
+	}
+	if c.mailURL != "https://mail.example.com" {
+		t.Errorf("mailURL = %q", c.mailURL)
+	}
+	if c.pictureURL != "https://pic.example.com" {
+		t.Errorf("pictureURL = %q", c.pictureURL)
 	}
 }
 

@@ -26,6 +26,15 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.MaxOutputTokens != 1024 {
 		t.Errorf("unexpected MaxOutputTokens: %d", cfg.MaxOutputTokens)
 	}
+	if cfg.MiaodiAPIBaseURL != "https://api.libv.cc/miaodi" {
+		t.Errorf("unexpected MiaodiAPIBaseURL: %s", cfg.MiaodiAPIBaseURL)
+	}
+	if cfg.MiaodiMailAPIURL != "https://api.miaodiapp.com/api/newmail.php" {
+		t.Errorf("unexpected MiaodiMailAPIURL: %s", cfg.MiaodiMailAPIURL)
+	}
+	if cfg.MiaodiPictureAPIURL != "https://picture.miaodiapp.com/api/upload" {
+		t.Errorf("unexpected MiaodiPictureAPIURL: %s", cfg.MiaodiPictureAPIURL)
+	}
 }
 
 func TestLoad_Overrides(t *testing.T) {
@@ -34,11 +43,17 @@ func TestLoad_Overrides(t *testing.T) {
 	os.Setenv("OPENAI_MODEL", "gpt-4")
 	os.Setenv("OPENAI_MODEL_MAX_TOKENS", "4096")
 	os.Setenv("OPENAI_MAX_OUTPUT_TOKENS", "512")
+	os.Setenv("MIAODI_API_BASE_URL", "https://api.example.com/miaodi")
+	os.Setenv("MIAODI_MAIL_API_URL", "https://mail.example.com")
+	os.Setenv("MIAODI_PICTURE_API_URL", "https://pic.example.com")
 	defer os.Unsetenv("PORT")
 	defer os.Unsetenv("DB_MAX_OPEN")
 	defer os.Unsetenv("OPENAI_MODEL")
 	defer os.Unsetenv("OPENAI_MODEL_MAX_TOKENS")
 	defer os.Unsetenv("OPENAI_MAX_OUTPUT_TOKENS")
+	defer os.Unsetenv("MIAODI_API_BASE_URL")
+	defer os.Unsetenv("MIAODI_MAIL_API_URL")
+	defer os.Unsetenv("MIAODI_PICTURE_API_URL")
 
 	cfg := Load()
 	if cfg.Port != "9090" {
@@ -55,6 +70,15 @@ func TestLoad_Overrides(t *testing.T) {
 	}
 	if cfg.MaxOutputTokens != 512 {
 		t.Errorf("expected MaxOutputTokens 512, got %d", cfg.MaxOutputTokens)
+	}
+	if cfg.MiaodiAPIBaseURL != "https://api.example.com/miaodi" {
+		t.Errorf("expected MiaodiAPIBaseURL override, got %s", cfg.MiaodiAPIBaseURL)
+	}
+	if cfg.MiaodiMailAPIURL != "https://mail.example.com" {
+		t.Errorf("expected MiaodiMailAPIURL override, got %s", cfg.MiaodiMailAPIURL)
+	}
+	if cfg.MiaodiPictureAPIURL != "https://pic.example.com" {
+		t.Errorf("expected MiaodiPictureAPIURL override, got %s", cfg.MiaodiPictureAPIURL)
 	}
 }
 

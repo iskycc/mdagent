@@ -30,7 +30,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 		return fmt.Errorf("init repositories failed: %w", err)
 	}
 
-	miaodi := client.NewMiaodiClient()
+	miaodi := client.NewMiaodiClientWithEndpoints(cfg.MiaodiAPIBaseURL, cfg.MiaodiMailAPIURL, cfg.MiaodiPictureAPIURL)
 	llm := openai.NewClient(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL)
 	llm.SetTimeout(8 * time.Second)
 

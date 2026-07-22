@@ -27,6 +27,9 @@ type Config struct {
 	CallbackAuthEnabled   bool
 	StatsToken            string
 	MaxCallbackBodyBytes  int64
+	MiaodiAPIBaseURL      string
+	MiaodiMailAPIURL      string
+	MiaodiPictureAPIURL   string
 	RedisHost             string
 	RedisPort             string
 	RedisPassword         string
@@ -56,6 +59,9 @@ func Load() *Config {
 		CallbackAuthEnabled:  getEnvBool("CALLBACK_AUTH_ENABLED", false),
 		StatsToken:           getEnv("STATS_TOKEN", ""),
 		MaxCallbackBodyBytes: getEnvInt64("MAX_CALLBACK_BODY_BYTES", 1024*1024),
+		MiaodiAPIBaseURL:     getEnv("MIAODI_API_BASE_URL", "https://api.libv.cc/miaodi"),
+		MiaodiMailAPIURL:     getEnv("MIAODI_MAIL_API_URL", "https://api.miaodiapp.com/api/newmail.php"),
+		MiaodiPictureAPIURL:  getEnv("MIAODI_PICTURE_API_URL", "https://picture.miaodiapp.com/api/upload"),
 		RedisHost:            getEnv("REDIS_HOST", "localhost"),
 		RedisPort:            getEnv("REDIS_PORT", "6379"),
 		RedisPassword:        getEnv("REDIS_PASSWORD", ""),
