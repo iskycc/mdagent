@@ -49,6 +49,7 @@ func TestRun_Success(t *testing.T) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_conversations").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS pending_images").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS api_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS llm_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	cfg := &config.Config{
 		Port:            "0",
@@ -164,6 +165,7 @@ func TestRunMain_Success(t *testing.T) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_conversations").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS pending_images").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS api_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS llm_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	cfg := &config.Config{
 		Port:            "0",

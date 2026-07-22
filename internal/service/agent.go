@@ -30,17 +30,18 @@ type AgentOptions struct {
 
 // Agent 是 AI Agent 核心服务
 type Agent struct {
-	llm              LLMClient
-	model            string
-	userRepo         UserStore
-	convRepo         ConversationStore
-	toolExec         ToolRunner
-	intentRouter     *IntentRouter
-	modelMaxTokens   int
-	maxOutputTokens  int
-	cache            cache.Cache
-	persistQueue     PersistQueue
+	llm               LLMClient
+	model             string
+	userRepo          UserStore
+	convRepo          ConversationStore
+	toolExec          ToolRunner
+	intentRouter      *IntentRouter
+	modelMaxTokens    int
+	maxOutputTokens   int
+	cache             cache.Cache
+	persistQueue      PersistQueue
 	systemPromptCache *systemPromptCache
+	llmCallRepo       LLMCallLogger
 }
 
 // systemPromptCache 按用户状态缓存 system prompt，减少每轮请求时的重复格式化。
@@ -93,6 +94,11 @@ func NewAgent(llm LLMClient, modelName string, userRepo UserStore, convRepo Conv
 
 // NewAgentWithOptions 创建带资源预算的 Agent。
 func NewAgentWithOptions(llm LLMClient, modelName string, userRepo UserStore, convRepo ConversationStore, toolExec ToolRunner, opts AgentOptions, c cache.Cache, pq PersistQueue) *Agent {
+	return NewAgentWithLogger(llm, modelName, userRepo, convRepo, toolExec, opts, c, pq, nil)
+}
+
+// NewAgentWithLogger 创建带 LLM 调用日志记录的 Agent。
+func NewAgentWithLogger(llm LLMClient, modelName string, userRepo UserStore, convRepo ConversationStore, toolExec ToolRunner, opts AgentOptions, c cache.Cache, pq PersistQueue, llmCallRepo LLMCallLogger) *Agent {
 	if opts.ModelMaxTokens <= 0 {
 		opts.ModelMaxTokens = defaultModelMaxTokens
 	}
@@ -118,6 +124,7 @@ func NewAgentWithOptions(llm LLMClient, modelName string, userRepo UserStore, co
 		cache:             c,
 		persistQueue:      pq,
 		systemPromptCache: newSystemPromptCache(time.Hour),
+		llmCallRepo:       llmCallRepo,
 	}
 }
 
@@ -215,6 +222,7 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 		)
 
 		resp, err := a.llm.CreateChatCompletion(ctx, req)
+		a.recordLLMCall(channelUserID, resp, err)
 		if err != nil {
 			log.Printf("llm call failed: %v", err)
 			return a.debugReturn("agent llm failed", fmt.Sprintf("AI 调用失败：%v", err))
@@ -295,6 +303,21 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 func (a *Agent) debugReturn(reason, reply string) string {
 	debuglog.Printf("%s reply=%q", reason, reply)
 	return reply
+}
+
+func (a *Agent) recordLLMCall(channelUserID string, resp *openai.ChatCompletionResponse, err error) {
+	if a.llmCallRepo == nil {
+		return
+	}
+	promptTokens, completionTokens, totalTokens := 0, 0, 0
+	if resp != nil {
+		promptTokens = resp.Usage.PromptTokens
+		completionTokens = resp.Usage.CompletionTokens
+		totalTokens = resp.Usage.TotalTokens
+	}
+	if recErr := a.llmCallRepo.Record(channelUserID, a.model, promptTokens, completionTokens, totalTokens); recErr != nil {
+		debuglog.Printf("record llm call failed user=%s error=%v", channelUserID, recErr)
+	}
 }
 
 // toToolDefinitions 转换工具定义

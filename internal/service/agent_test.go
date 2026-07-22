@@ -41,6 +41,27 @@ func (f *fakeUserStore) GetOrCreate(channelUserID string) (*model.User, error) {
 	return f.user, nil
 }
 
+type fakeLLMLogger struct {
+	records []struct {
+		channelUserID    string
+		model            string
+		promptTokens     int
+		completionTokens int
+		totalTokens      int
+	}
+}
+
+func (f *fakeLLMLogger) Record(channelUserID, model string, promptTokens, completionTokens, totalTokens int) error {
+	f.records = append(f.records, struct {
+		channelUserID    string
+		model            string
+		promptTokens     int
+		completionTokens int
+		totalTokens      int
+	}{channelUserID, model, promptTokens, completionTokens, totalTokens})
+	return nil
+}
+
 type fakeConversationStore struct {
 	messages    []openai.ChatMessage
 	err         error
@@ -497,4 +518,58 @@ func (f *fakeCache) GetUser(ctx context.Context, channelUserID string) (*model.U
 		return f.user, nil
 	}
 	return nil, errors.New("not found")
+}
+
+func TestAgent_RecordLLMCall(t *testing.T) {
+	logger := &fakeLLMLogger{}
+	a := &Agent{model: "deepseek-v4", llmCallRepo: logger}
+
+	a.recordLLMCall("u1", &openai.ChatCompletionResponse{Usage: struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	}{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150}}, nil)
+
+	if len(logger.records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(logger.records))
+	}
+	rec := logger.records[0]
+	if rec.channelUserID != "u1" || rec.model != "deepseek-v4" || rec.totalTokens != 150 {
+		t.Errorf("unexpected record: %+v", rec)
+	}
+
+	// nil repo should not panic
+	a.llmCallRepo = nil
+	a.recordLLMCall("u1", nil, errors.New("llm failed"))
+}
+
+func TestAgent_ProcessMessage_RecordsLLMCall(t *testing.T) {
+	logger := &fakeLLMLogger{}
+	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("ok")}}
+	llm.responses[0].Usage.PromptTokens = 10
+	llm.responses[0].Usage.CompletionTokens = 5
+	llm.responses[0].Usage.TotalTokens = 15
+
+	agent := NewAgentWithLogger(
+		llm,
+		"model",
+		&fakeUserStore{user: &model.User{ChannelUserID: "u1", Status: userStatusBound, Book: "b", Chara: "c"}},
+		&fakeConversationStore{},
+		&fakeToolRunner{},
+		AgentOptions{},
+		cache.NopCache{},
+		nopPersistQueue{},
+		logger,
+	)
+
+	reply := agent.ProcessMessage(context.Background(), newTestPayload())
+	if reply != "ok" {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+	if len(logger.records) != 1 {
+		t.Fatalf("expected 1 llm record, got %d", len(logger.records))
+	}
+	if logger.records[0].totalTokens != 15 {
+		t.Errorf("unexpected total tokens: %d", logger.records[0].totalTokens)
+	}
 }

@@ -21,7 +21,8 @@ func newStatsDeps(t *testing.T) (*StatsService, sqlmock.Sqlmock) {
 	userRepo := repository.NewUserRepo(db)
 	convRepo := repository.NewConversationRepo(db)
 	logRepo := repository.NewCallLogRepo(db)
-	return NewStatsService(userRepo, convRepo, logRepo), mock
+	llmCallLogRepo := repository.NewLLMCallLogRepo(db)
+	return NewStatsService(userRepo, convRepo, logRepo, llmCallLogRepo), mock
 }
 
 func TestStatsService_GetStats(t *testing.T) {
@@ -32,10 +33,14 @@ func TestStatsService_GetStats(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM agent_conversations`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(50))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(14))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(60))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(28))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(120))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(20))
 	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"date", "count"}).AddRow("2026-06-30", 2))
 	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"date", "count"}).AddRow("2026-06-30", 2))
+	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"date", "count", "prompt_tokens", "completion_tokens", "total_tokens"}).AddRow("2026-06-30", 2, 100, 50, 150))
+	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"date", "count", "prompt_tokens", "completion_tokens", "total_tokens"}).AddRow("2026-06-30", 2, 100, 50, 150))
 	mock.ExpectQuery(`SELECT action, COUNT\(\*\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"action", "count"}).AddRow("put_text", 10))
 
 	data, err := svc.GetStats()
@@ -51,10 +56,13 @@ func TestStatsService_GetStats(t *testing.T) {
 	if data.Calls7Days != 14 || data.Calls30Days != 60 {
 		t.Errorf("unexpected calls: %+v", data)
 	}
+	if data.LLMCalls7Days != 28 || data.LLMCalls30Days != 120 {
+		t.Errorf("unexpected llm calls: %+v", data)
+	}
 }
 
 func TestStatsService_ToJSON(t *testing.T) {
-	svc := NewStatsService(nil, nil, nil)
+	svc := NewStatsService(nil, nil, nil, nil)
 	jsonStr, err := svc.ToJSON(&StatsData{TotalUsers: 5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -123,6 +131,8 @@ func TestStatsService_GetStats_DailyStatsError(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM agent_conversations`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(50))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(14))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(60))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(28))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(120))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(20))
 	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnError(sqlmock.ErrCancelled)
@@ -187,6 +197,8 @@ func TestStatsService_GetStats_ActiveUsers30Error(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM agent_conversations`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(50))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(14))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(60))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(28))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(120))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(30).WillReturnError(sqlmock.ErrCancelled)
 	_, err := svc.GetStats()
@@ -202,6 +214,8 @@ func TestStatsService_GetStats_Daily30Error(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM agent_conversations`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(50))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(14))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(60))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(28))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(120))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(20))
 	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"date", "count"}).AddRow("2026-06-30", 2))
@@ -219,6 +233,8 @@ func TestStatsService_GetStats_ActionStatsError(t *testing.T) {
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM agent_conversations`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(50))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(14))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(60))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(28))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM llm_call_log WHERE created_at`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(120))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
 	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(20))
 	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(sqlmock.NewRows([]string{"date", "count"}).AddRow("2026-06-30", 2))
@@ -231,7 +247,7 @@ func TestStatsService_GetStats_ActionStatsError(t *testing.T) {
 }
 
 func TestStatsService_ToJSON_Error(t *testing.T) {
-	svc := NewStatsService(nil, nil, nil)
+	svc := NewStatsService(nil, nil, nil, nil)
 	_, err := svc.ToJSON(&StatsData{Performance: []metrics.MetricSnapshot{{SuccessRate: math.Inf(1)}}})
 	if err == nil {
 		t.Fatal("expected error")

@@ -30,6 +30,7 @@ func TestRun_StartAndShutdown(t *testing.T) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_conversations").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS pending_images").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS api_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS llm_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	cfg := &config.Config{
 		Port:          "0",
@@ -72,6 +73,7 @@ func TestRun_ReturnsListenError(t *testing.T) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_conversations").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS pending_images").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS api_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS llm_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
 
 	cfg := &config.Config{
 		Port:          "bad port",
@@ -440,8 +442,8 @@ func TestStartCallLogCleanup_CtxDone(t *testing.T) {
 	cancel()
 	time.Sleep(50 * time.Millisecond)
 
-	if cleaner.called != 0 {
-		t.Fatalf("expected cleanup not called, got %d", cleaner.called)
+	if cleaner.calledCount() != 0 {
+		t.Fatalf("expected cleanup not called, got %d", cleaner.calledCount())
 	}
 }
 
@@ -451,6 +453,38 @@ func TestStartCallLogCleanup_ErrorAndDeleted(t *testing.T) {
 
 	cleaner := &fakeCallLogCleaner{err: errors.New("cleanup failed")}
 	startCallLogCleanup(ctx, cleaner, 10*time.Millisecond)
+
+	time.Sleep(40 * time.Millisecond)
+	if cleaner.calledCount() == 0 {
+		t.Fatal("expected cleanup called")
+	}
+
+	cleaner.setResult(5, nil)
+	time.Sleep(40 * time.Millisecond)
+	if cleaner.calledCount() < 2 {
+		t.Fatalf("expected cleanup called multiple times, got %d", cleaner.calledCount())
+	}
+}
+
+func TestStartLLMCallLogCleanup_CtxDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cleaner := &fakeCallLogCleaner{}
+	startLLMCallLogCleanup(ctx, cleaner, time.Hour)
+
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	if cleaner.calledCount() != 0 {
+		t.Fatalf("expected cleanup not called, got %d", cleaner.calledCount())
+	}
+}
+
+func TestStartLLMCallLogCleanup_ErrorAndDeleted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cleaner := &fakeCallLogCleaner{err: errors.New("cleanup failed")}
+	startLLMCallLogCleanup(ctx, cleaner, 10*time.Millisecond)
 
 	time.Sleep(40 * time.Millisecond)
 	if cleaner.calledCount() == 0 {

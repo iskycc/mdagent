@@ -109,7 +109,7 @@ const statsTemplate = `<!DOCTYPE html>
     <!-- 概览 Tab -->
     <div id="panel-overview" class="tab-panel">
     <!-- 核心指标卡片 -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
         <div class="text-sm font-medium text-slate-500 mb-1">总用户数</div>
         <div class="text-3xl font-bold text-indigo-600" id="total-users">0</div>
@@ -123,15 +123,25 @@ const statsTemplate = `<!DOCTYPE html>
         <div class="text-3xl font-bold text-blue-600" id="total-conversations">0</div>
       </div>
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
-        <div class="text-sm font-medium text-slate-500 mb-1">近 7 天请求</div>
+        <div class="text-sm font-medium text-slate-500 mb-1">近 7 天喵滴请求</div>
         <div class="text-3xl font-bold text-amber-600" id="calls-7">0</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+        <div class="text-sm font-medium text-slate-500 mb-1">近 7 天 LLM 调用</div>
+        <div class="text-3xl font-bold text-purple-600" id="llm-calls-7">0</div>
       </div>
     </div>
 
     <!-- 30 天趋势 -->
     <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 mb-6">
-      <h2 class="text-lg font-semibold text-slate-800 mb-4">近 30 天请求趋势</h2>
+      <h2 class="text-lg font-semibold text-slate-800 mb-4">近 30 天喵滴请求趋势</h2>
       <div id="chart-30" class="w-full h-80"></div>
+    </div>
+
+    <!-- LLM 调用与 Token 趋势 -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 mb-6">
+      <h2 class="text-lg font-semibold text-slate-800 mb-4">近 30 天 LLM 调用次数与 Token 消耗</h2>
+      <div id="chart-llm-30" class="w-full h-80"></div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -148,13 +158,20 @@ const statsTemplate = `<!DOCTYPE html>
     </div>
 
     <!-- 活跃用户卡片 -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 flex items-center justify-between">
         <div>
-          <div class="text-sm font-medium text-slate-500">近 30 天请求</div>
+          <div class="text-sm font-medium text-slate-500">近 30 天喵滴请求</div>
           <div class="text-2xl font-bold text-slate-800 mt-1" id="calls-30">0</div>
         </div>
         <div class="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600">📈</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 flex items-center justify-between">
+        <div>
+          <div class="text-sm font-medium text-slate-500">近 30 天 LLM 调用</div>
+          <div class="text-2xl font-bold text-slate-800 mt-1" id="llm-calls-30">0</div>
+        </div>
+        <div class="w-10 h-10 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">🤖</div>
       </div>
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 flex items-center justify-between">
         <div>
@@ -212,6 +229,8 @@ const statsTemplate = `<!DOCTYPE html>
     document.getElementById('total-conversations').textContent = stats.total_conversations.toLocaleString();
     document.getElementById('calls-7').textContent = stats.calls_7_days.toLocaleString();
     document.getElementById('calls-30').textContent = stats.calls_30_days.toLocaleString();
+    document.getElementById('llm-calls-7').textContent = stats.llm_calls_7_days.toLocaleString();
+    document.getElementById('llm-calls-30').textContent = stats.llm_calls_30_days.toLocaleString();
     document.getElementById('active-7').textContent = stats.active_users_7_days.toLocaleString();
     document.getElementById('active-30').textContent = stats.active_users_30_days.toLocaleString();
 
@@ -245,6 +264,45 @@ const statsTemplate = `<!DOCTYPE html>
 
     renderLineChart('chart-30', stats.daily_30_days, '#4f46e5');
     renderLineChart('chart-7', stats.daily_7_days, '#10b981');
+
+    const llmChart = echarts.init(document.getElementById('chart-llm-30'));
+    const llmDates = stats.llm_daily_30_days.map(d => d.date);
+    const llmCounts = stats.llm_daily_30_days.map(d => d.count);
+    const llmTokens = stats.llm_daily_30_days.map(d => d.total_tokens);
+    llmChart.setOption({
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['调用次数', 'Token 消耗'], bottom: '0%' },
+      grid: { left: '3%', right: '4%', bottom: '12%', containLabel: true },
+      xAxis: { type: 'category', boundaryGap: false, data: llmDates, axisLine: { lineStyle: { color: '#94a3b8' } } },
+      yAxis: [
+        { type: 'value', name: '次数', position: 'left', splitLine: { lineStyle: { color: '#f1f5f9' } }, axisLine: { lineStyle: { color: '#94a3b8' } } },
+        { type: 'value', name: 'Token', position: 'right', splitLine: { show: false }, axisLine: { lineStyle: { color: '#94a3b8' } } }
+      ],
+      series: [
+        {
+          name: '调用次数',
+          data: llmCounts,
+          type: 'line',
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 8,
+          itemStyle: { color: '#7c3aed' },
+          lineStyle: { width: 3 }
+        },
+        {
+          name: 'Token 消耗',
+          data: llmTokens,
+          type: 'line',
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 8,
+          yAxisIndex: 1,
+          itemStyle: { color: '#f59e0b' },
+          lineStyle: { width: 3, type: 'dashed' }
+        }
+      ]
+    });
+    window.addEventListener('resize', () => llmChart.resize());
 
     const pieChart = echarts.init(document.getElementById('chart-pie'));
     pieChart.setOption({

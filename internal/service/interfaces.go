@@ -40,6 +40,11 @@ type PersistQueue interface {
 	Flush(ctx context.Context) error
 }
 
+// LLMCallLogger 是 LLM 调用日志存储接口。
+type LLMCallLogger interface {
+	Record(channelUserID, model string, promptTokens, completionTokens, totalTokens int) error
+}
+
 // MiaodiClient 是工具执行器需要的喵滴客户端接口
 type MiaodiClient interface {
 	Check(key string) bool

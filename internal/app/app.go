@@ -38,8 +38,10 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	convRepo := repository.NewConversationRepo(db)
 	pendingRepo := repository.NewPendingImageRepo(db)
 	callLogRepo := repository.NewCallLogRepo(db)
+	llmCallLogRepo := repository.NewLLMCallLogRepo(db)
 	startConversationCleanup(ctx, convRepo, time.Hour)
 	startCallLogCleanup(ctx, callLogRepo, time.Hour)
+	startLLMCallLogCleanup(ctx, llmCallLogRepo, time.Hour)
 
 	redisAddr := cfg.RedisHost + ":" + cfg.RedisPort
 	redisCache := cache.NewRedisCache(redisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisEnabled)
@@ -52,13 +54,13 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 
 	toolExec := service.NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, callLogRepo, redisCache, persistQueue)
 	toolExec.SetModel(cfg.OpenAIModel)
-	agent := service.NewAgentWithOptions(llm, cfg.OpenAIModel, userRepo, convRepo, toolExec, service.AgentOptions{
+	agent := service.NewAgentWithLogger(llm, cfg.OpenAIModel, userRepo, convRepo, toolExec, service.AgentOptions{
 		ModelMaxTokens:  cfg.ModelMaxTokens,
 		MaxOutputTokens: cfg.MaxOutputTokens,
-	}, redisCache, persistQueue)
+	}, redisCache, persistQueue, llmCallLogRepo)
 	callbackHandler := handler.NewCallbackHandler(agent)
 
-	statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo)
+	statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo, llmCallLogRepo)
 	statsHandler := handler.NewStatsHandler(statsSvc)
 
 	mux := http.NewServeMux()
@@ -153,6 +155,29 @@ func startCallLogCleanup(ctx context.Context, callLogRepo callLogCleaner, interv
 	}()
 }
 
+func startLLMCallLogCleanup(ctx context.Context, llmCallLogRepo callLogCleaner, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				deleted, err := llmCallLogRepo.CleanupOlderThan(30)
+				if err != nil {
+					log.Printf("cleanup llm call log failed: %v", err)
+					debuglog.Printf("cleanup llm call log failed error=%v", err)
+					continue
+				}
+				if deleted > 0 {
+					debuglog.Printf("cleanup llm call log deleted=%d", deleted)
+				}
+			}
+		}
+	}()
+}
+
 type conversationSeeder interface {
 	ListActiveSince(cutoff time.Time) ([]repository.ConversationWithMessages, error)
 }
@@ -203,6 +228,7 @@ func initRepos(db *sql.DB) error {
 		{"agent_conversations", repository.NewConversationRepo(db).EnsureTable},
 		{"pending_images", repository.NewPendingImageRepo(db).EnsureTable},
 		{"api_call_log", repository.NewCallLogRepo(db).EnsureTable},
+		{"llm_call_log", repository.NewLLMCallLogRepo(db).EnsureTable},
 	}
 	for _, r := range repos {
 		if err := r.fn(); err != nil {
