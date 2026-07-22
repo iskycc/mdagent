@@ -200,14 +200,17 @@ func (r *Recorder) Init() error {
 // Run 启动后台 goroutine，按 flushInterval 周期刷新 pending 样本到 Store。
 // 多次调用 Run() 只会启动一个刷新 goroutine；当 store 为 nil 时不执行任何操作。
 func (r *Recorder) Run(ctx context.Context) {
+	r.wg.Add(1)
+	if !r.running.CompareAndSwap(false, true) {
+		r.wg.Done()
+		return
+	}
 	store := r.getStore()
 	if store == nil {
+		r.running.Store(false)
+		r.wg.Done()
 		return
 	}
-	if !r.running.CompareAndSwap(false, true) {
-		return
-	}
-	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
 		defer r.running.Store(false)
