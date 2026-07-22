@@ -3,6 +3,7 @@
 package metrics
 
 import (
+	"context"
 	"sort"
 	"sync"
 	"time"
@@ -23,6 +24,20 @@ type MetricSnapshot struct {
 }
 
 const maxSamples = 10000
+
+// Sample 是一条待持久化的指标采样记录。
+type Sample struct {
+	Name       string
+	DurationMs float64
+	Success    bool
+	CreatedAt  time.Time
+}
+
+// Store 定义指标采样的持久化接口。
+type Store interface {
+	Save(samples []Sample) error
+	LoadRecent(limit int) ([]Sample, error)
+}
 
 // metric 是内部聚合结构。
 type metric struct {
@@ -75,11 +90,30 @@ func (m *metric) snapshot(name string) MetricSnapshot {
 type Recorder struct {
 	mu      sync.RWMutex
 	metrics map[string]*metric
+
+	store         Store
+	pendingMu     sync.Mutex
+	pending       []Sample
+	flushInterval time.Duration
+	maxPending    int
+	stopCh        chan struct{}
 }
 
 // NewRecorder 创建一个新的 Recorder。
 func NewRecorder() *Recorder {
-	return &Recorder{metrics: make(map[string]*metric)}
+	return &Recorder{
+		metrics:       make(map[string]*metric),
+		flushInterval: 30 * time.Second,
+		maxPending:    1000,
+	}
+}
+
+// NewRecorderWithStore 创建一个有持久化能力的 Recorder。
+func NewRecorderWithStore(store Store) *Recorder {
+	r := NewRecorder()
+	r.store = store
+	r.stopCh = make(chan struct{})
+	return r
 }
 
 func (r *Recorder) get(name string) *metric {
@@ -96,6 +130,100 @@ func (r *Recorder) get(name string) *metric {
 // Record 记录一次调用耗时与结果。
 func (r *Recorder) Record(name string, d time.Duration, success bool) {
 	r.get(name).record(d, success)
+
+	if r.store == nil {
+		return
+	}
+
+	r.pendingMu.Lock()
+	r.pending = append(r.pending, Sample{
+		Name:       name,
+		DurationMs: float64(d.Nanoseconds()) / 1e6,
+		Success:    success,
+		CreatedAt:  time.Now(),
+	})
+	shouldFlush := len(r.pending) >= r.maxPending
+	r.pendingMu.Unlock()
+
+	if shouldFlush {
+		r.Flush()
+	}
+}
+
+// Init 从 Store 加载最近的采样并恢复到内存统计中。
+func (r *Recorder) Init() error {
+	if r.store == nil {
+		return nil
+	}
+	samples, err := r.store.LoadRecent(maxSamples)
+	if err != nil {
+		return err
+	}
+	// LoadRecent 通常按时间降序返回，需按时间升序回放以保证内存中样本顺序正确。
+	for i := len(samples) - 1; i >= 0; i-- {
+		s := samples[i]
+		r.get(s.Name).record(time.Duration(s.DurationMs*1e6), s.Success)
+	}
+	return nil
+}
+
+// Run 启动后台 goroutine，按 flushInterval 周期刷新 pending 样本到 Store。
+func (r *Recorder) Run(ctx context.Context) {
+	if r.store == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(r.flushInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				r.Flush()
+				return
+			case <-r.stopCh:
+				r.Flush()
+				return
+			case <-ticker.C:
+				r.Flush()
+			}
+		}
+	}()
+}
+
+// Flush 将 pending 中的样本持久化到 Store；失败时将样本重新放回 pending。
+func (r *Recorder) Flush() error {
+	if r.store == nil {
+		return nil
+	}
+
+	r.pendingMu.Lock()
+	if len(r.pending) == 0 {
+		r.pendingMu.Unlock()
+		return nil
+	}
+	toSave := make([]Sample, len(r.pending))
+	copy(toSave, r.pending)
+	r.pending = r.pending[:0]
+	r.pendingMu.Unlock()
+
+	if err := r.store.Save(toSave); err != nil {
+		r.pendingMu.Lock()
+		// 将失败样本重新放到队列头部（最老的位置），保留原有顺序。
+		r.pending = append(toSave, r.pending...)
+		if len(r.pending) > r.maxPending {
+			r.pending = r.pending[len(r.pending)-r.maxPending:]
+		}
+		r.pendingMu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// Stop 通知后台刷新 goroutine 退出。
+func (r *Recorder) Stop() {
+	if r.stopCh != nil {
+		close(r.stopCh)
+	}
 }
 
 // Start 开始一个计时 Span，返回后调用者需调用 Finish。
@@ -150,6 +278,22 @@ func Start(name string) *Span {
 // Snapshot 返回默认 Recorder 的当前快照。
 func Snapshot() []MetricSnapshot {
 	return global.Snapshot()
+}
+
+// Init 使用指定的 Store 初始化默认 Recorder 并恢复历史样本。
+func Init(store Store) error {
+	global = NewRecorderWithStore(store)
+	return global.Init()
+}
+
+// Run 启动默认 Recorder 的后台刷新循环。
+func Run(ctx context.Context) {
+	global.Run(ctx)
+}
+
+// Flush 立即将默认 Recorder 的 pending 样本刷新到 Store。
+func Flush() error {
+	return global.Flush()
 }
 
 func percentile(sorted []float64, p float64) float64 {
