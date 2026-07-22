@@ -28,16 +28,18 @@ func NewStatsHandler(statsSvc StatsProvider, token string) *StatsHandler {
 
 // RegisterRoutes 注册路由
 func (h *StatsHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/stats", h.requireToken(h.handleStatsPage))
+	mux.HandleFunc("/stats", h.handleStatsPage)
 	mux.HandleFunc("/api/stats", h.requireToken(h.handleStatsAPI))
 }
 
 // requireToken 验证 Bearer Token 或 URL 查询参数 token。
+// 仅用于 JSON API；HTML 页面由 handleStatsPage 自行渲染登录弹窗。
 func (h *StatsHandler) requireToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !h.authenticate(r) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="stats"`)
-			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"Unauthorized"}`))
 			return
 		}
 		next(w, r)
@@ -85,6 +87,11 @@ func (h *StatsHandler) handleStatsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StatsHandler) handleStatsPage(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticate(r) {
+		h.renderLoginPrompt(w, "")
+		return
+	}
+
 	data, err := h.statsSvc.GetStats()
 	if err != nil {
 		log.Printf("get stats failed: %v", err)
@@ -114,6 +121,70 @@ func (h *StatsHandler) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *StatsHandler) renderLoginPrompt(w http.ResponseWriter, errorMsg string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = loginTemplate.Execute(w, map[string]string{
+		"Error": errorMsg,
+	})
+}
+
+var loginTemplate = template.Must(template.New("login").Parse(loginTemplateHTML))
+
+const loginTemplateHTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>统计看板 - 需要验证</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md mx-4">
+    <h1 class="text-2xl font-bold text-slate-800 mb-2 text-center">统计看板</h1>
+    <p class="text-slate-500 mb-6 text-center text-sm">请输入访问令牌以查看统计数据</p>
+    <form id="token-form" class="space-y-4">
+      <div>
+        <label for="token" class="block text-sm font-medium text-slate-700 mb-1">访问令牌</label>
+        <input type="password" id="token" name="token" required
+               class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+               placeholder="输入 STATS_TOKEN">
+      </div>
+      {{if .Error}}
+      <div id="error-msg" class="text-red-600 text-sm">{{.Error}}</div>
+      {{else}}
+      <div id="error-msg" class="text-red-600 text-sm hidden"></div>
+      {{end}}
+      <button type="submit"
+              class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+        进入看板
+      </button>
+    </form>
+  </div>
+  <script>
+    document.getElementById('token-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const token = document.getElementById('token').value.trim();
+      const errorMsg = document.getElementById('error-msg');
+      try {
+        const resp = await fetch('/api/stats?token=' + encodeURIComponent(token));
+        if (resp.ok) {
+          localStorage.setItem('stats_token', token);
+          window.location.href = '/stats?token=' + encodeURIComponent(token);
+        } else {
+          errorMsg.textContent = 'Token 无效，请重试';
+          errorMsg.classList.remove('hidden');
+        }
+      } catch (err) {
+        errorMsg.textContent = '验证失败，请稍后重试';
+        errorMsg.classList.remove('hidden');
+      }
+    });
+  </script>
+</body>
+</html>
+`
+
 const statsTemplate = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -127,6 +198,18 @@ const statsTemplate = `<!DOCTYPE html>
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen">
+  <script>
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has('token')) {
+        const saved = localStorage.getItem('stats_token');
+        if (saved) {
+          params.set('token', saved);
+          window.location.search = params.toString();
+        }
+      }
+    })();
+  </script>
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
       <div>

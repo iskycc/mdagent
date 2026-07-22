@@ -63,8 +63,35 @@ func TestHandleStatsPage_Unauthorized(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for login prompt, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "访问令牌") {
+		t.Fatalf("expected login prompt, got %q", body)
+	}
+	if rec.Header().Get("WWW-Authenticate") != "" {
+		t.Fatalf("expected no WWW-Authenticate header for HTML page")
+	}
+}
+
+func TestHandleStatsAPI_Unauthorized(t *testing.T) {
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}}, testStatsToken)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("expected json content-type, got %q", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "Unauthorized") {
+		t.Fatalf("expected Unauthorized error, got %q", rec.Body.String())
 	}
 }
 
