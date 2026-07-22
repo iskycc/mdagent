@@ -132,3 +132,49 @@ func (r *ProcessedMessageRepo) MarkFailed(channelUserID string, conversationID, 
 		ProcessedMessageFailed, timeutil.Now(), channelUserID, conversationID, messageID)
 	return err
 }
+
+// DailyMessageStat 是按日期聚合的处理消息数。
+type DailyMessageStat struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+// TotalMessages 查询近 N 天处理消息总数。
+func (r *ProcessedMessageRepo) TotalMessages(days int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*) FROM processed_messages
+		WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+		days).Scan(&count)
+	return count, err
+}
+
+// DailyMessageStats 按天统计近 N 天处理消息数。
+func (r *ProcessedMessageRepo) DailyMessageStats(days int) ([]DailyMessageStat, error) {
+	rows, err := r.db.Query(`
+		SELECT DATE(created_at) as date, COUNT(*) as count
+		FROM processed_messages
+		WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+		GROUP BY DATE(created_at)
+		ORDER BY date ASC`,
+		days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := make([]DailyMessageStat, 0)
+	for rows.Next() {
+		var raw interface{}
+		var count int
+		if err := rows.Scan(&raw, &count); err != nil {
+			return nil, err
+		}
+		date, err := parseDateValue(raw)
+		if err != nil {
+			return nil, err
+		}
+		stats = append(stats, DailyMessageStat{Date: date, Count: count})
+	}
+	return stats, rows.Err()
+}

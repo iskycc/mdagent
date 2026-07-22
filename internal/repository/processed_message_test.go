@@ -222,3 +222,51 @@ func TestProcessedMessageRepo_MarkFailed(t *testing.T) {
 		t.Fatalf("expectations: %v", err)
 	}
 }
+
+func TestProcessedMessageRepo_TotalMessages(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewProcessedMessageRepo(db)
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM processed_messages").
+		WithArgs(7).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(42))
+
+	count, err := repo.TotalMessages(7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 42 {
+		t.Errorf("expected 42, got %d", count)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestProcessedMessageRepo_DailyMessageStats(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewProcessedMessageRepo(db)
+	mock.ExpectQuery("SELECT DATE\\(created_at\\)").
+		WithArgs(7).
+		WillReturnRows(sqlmock.NewRows([]string{"date", "count"}).AddRow("2026-07-22", 5))
+
+	stats, err := repo.DailyMessageStats(7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stats) != 1 || stats[0].Date != "2026-07-22" || stats[0].Count != 5 {
+		t.Errorf("unexpected stats: %+v", stats)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}

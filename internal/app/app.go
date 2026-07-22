@@ -67,7 +67,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	callbackHandler.RegisterRoutes(mux, cfg.CallbackPath)
 
 	if cfg.StatsToken != "" {
-		statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo, llmCallLogRepo)
+		statsSvc := service.NewStatsService(userRepo, convRepo, callLogRepo, llmCallLogRepo, processedMsgRepo)
 		statsHandler := handler.NewStatsHandler(statsSvc, cfg.StatsToken)
 		statsHandler.RegisterRoutes(mux)
 	}

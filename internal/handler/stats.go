@@ -234,7 +234,7 @@ const statsTemplate = `<!DOCTYPE html>
     <!-- 概览 Tab -->
     <div id="panel-overview" class="tab-panel">
     <!-- 核心指标卡片 -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-6 mb-8">
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
         <div class="text-sm font-medium text-slate-500 mb-1">总用户数</div>
         <div class="text-3xl font-bold text-indigo-600" id="total-users">0</div>
@@ -255,6 +255,10 @@ const statsTemplate = `<!DOCTYPE html>
         <div class="text-sm font-medium text-slate-500 mb-1">近 7 天 LLM 调用</div>
         <div class="text-3xl font-bold text-purple-600" id="llm-calls-7">0</div>
       </div>
+      <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+        <div class="text-sm font-medium text-slate-500 mb-1">近 7 天消息处理</div>
+        <div class="text-3xl font-bold text-rose-600" id="messages-7">0</div>
+      </div>
     </div>
 
     <!-- 30 天趋势 -->
@@ -267,6 +271,12 @@ const statsTemplate = `<!DOCTYPE html>
     <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 mb-6">
       <h2 class="text-lg font-semibold text-slate-800 mb-4">近 30 天 LLM 调用次数与 Token 消耗</h2>
       <div id="chart-llm-30" class="w-full h-80"></div>
+    </div>
+
+    <!-- 消息处理趋势 -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 mb-6">
+      <h2 class="text-lg font-semibold text-slate-800 mb-4">近 30 天消息处理数</h2>
+      <div id="chart-messages-30" class="w-full h-80"></div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -283,7 +293,7 @@ const statsTemplate = `<!DOCTYPE html>
     </div>
 
     <!-- 活跃用户卡片 -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 flex items-center justify-between">
         <div>
           <div class="text-sm font-medium text-slate-500">近 30 天喵滴请求</div>
@@ -297,6 +307,13 @@ const statsTemplate = `<!DOCTYPE html>
           <div class="text-2xl font-bold text-slate-800 mt-1" id="llm-calls-30">0</div>
         </div>
         <div class="w-10 h-10 rounded-full bg-purple-50 flex items-center justify-center text-purple-600">🤖</div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 flex items-center justify-between">
+        <div>
+          <div class="text-sm font-medium text-slate-500">近 30 天消息处理</div>
+          <div class="text-2xl font-bold text-slate-800 mt-1" id="messages-30">0</div>
+        </div>
+        <div class="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center text-rose-600">💬</div>
       </div>
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100 flex items-center justify-between">
         <div>
@@ -356,6 +373,8 @@ const statsTemplate = `<!DOCTYPE html>
     document.getElementById('calls-30').textContent = stats.calls_30_days.toLocaleString();
     document.getElementById('llm-calls-7').textContent = stats.llm_calls_7_days.toLocaleString();
     document.getElementById('llm-calls-30').textContent = stats.llm_calls_30_days.toLocaleString();
+    document.getElementById('messages-7').textContent = stats.messages_7_days.toLocaleString();
+    document.getElementById('messages-30').textContent = stats.messages_30_days.toLocaleString();
     document.getElementById('active-7').textContent = stats.active_users_7_days.toLocaleString();
     document.getElementById('active-30').textContent = stats.active_users_30_days.toLocaleString();
 
@@ -389,6 +408,7 @@ const statsTemplate = `<!DOCTYPE html>
 
     renderLineChart('chart-30', stats.daily_30_days, '#4f46e5');
     renderLineChart('chart-7', stats.daily_7_days, '#10b981');
+    renderLineChart('chart-messages-30', stats.message_daily_30_days, '#f43f5e');
 
     const llmChart = echarts.init(document.getElementById('chart-llm-30'));
     const llmDates = stats.llm_daily_30_days.map(d => d.date);
