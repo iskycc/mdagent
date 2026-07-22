@@ -8,6 +8,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/pkg/openai"
@@ -52,6 +53,12 @@ func TestNopCache(t *testing.T) {
 	}
 	if err := c.AppendLog(ctx, "u1", repository.UserCallLog{}); err == nil {
 		t.Error("expected AppendLog error")
+	}
+	if err := c.SetMetricsSnapshot(ctx, nil); err == nil {
+		t.Error("expected SetMetricsSnapshot error")
+	}
+	if _, err := c.GetMetricsSnapshot(ctx); err == nil {
+		t.Error("expected GetMetricsSnapshot error")
 	}
 }
 
@@ -621,5 +628,90 @@ func TestRedisCache_GetRecentLogs_UnmarshalErrorViaStub(t *testing.T) {
 	_, err := c.GetRecentLogs(ctx, "u1")
 	if err == nil {
 		t.Fatal("expected unmarshal error")
+	}
+}
+
+func TestRedisCache_MetricsSnapshot(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	c := NewRedisCache(s.Addr(), "", 0, true)
+	ctx := context.Background()
+
+	snapshots := []metrics.MetricSnapshot{
+		{Name: "api", Count: 10, Success: 9, Errors: 1, SuccessRate: 0.9, AvgMs: 12.5, P50Ms: 10, P90Ms: 20, P95Ms: 25, P99Ms: 30},
+	}
+	if err := c.SetMetricsSnapshot(ctx, snapshots); err != nil {
+		t.Fatalf("set metrics snapshot: %v", err)
+	}
+
+	got, err := c.GetMetricsSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("get metrics snapshot: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "api" || got[0].Count != 10 {
+		t.Fatalf("unexpected snapshots: %+v", got)
+	}
+
+	ttl := s.TTL("md:metrics:snapshot")
+	if ttl < 4*time.Minute || ttl > 6*time.Minute {
+		t.Fatalf("expected TTL around 5m, got %v", ttl)
+	}
+}
+
+func TestRedisCache_GetMetricsSnapshot_NotFound(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	c := NewRedisCache(s.Addr(), "", 0, true)
+	ctx := context.Background()
+
+	_, err := c.GetMetricsSnapshot(ctx)
+	if err == nil {
+		t.Fatal("expected error for missing snapshot")
+	}
+}
+
+func TestRedisCache_GetMetricsSnapshot_UnmarshalError(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	c := NewRedisCache(s.Addr(), "", 0, true)
+	ctx := context.Background()
+	s.Set("md:metrics:snapshot", "not-json")
+
+	_, err := c.GetMetricsSnapshot(ctx)
+	if err == nil {
+		t.Fatal("expected unmarshal error")
+	}
+}
+
+func TestRedisCache_SetMetricsSnapshot_MarshalError(t *testing.T) {
+	s := miniredis.RunT(t)
+	defer s.Close()
+
+	c := NewRedisCache(s.Addr(), "", 0, true)
+	ctx := context.Background()
+
+	old := jsonMarshal
+	jsonMarshal = func(v interface{}) ([]byte, error) { return nil, fmt.Errorf("marshal error") }
+	defer func() { jsonMarshal = old }()
+
+	if err := c.SetMetricsSnapshot(ctx, []metrics.MetricSnapshot{{Name: "api"}}); err == nil {
+		t.Fatal("expected marshal error")
+	}
+}
+
+func TestRedisCache_SetMetricsSnapshot_Disabled(t *testing.T) {
+	c := &RedisCache{enabled: false}
+	if err := c.SetMetricsSnapshot(context.Background(), []metrics.MetricSnapshot{}); err == nil {
+		t.Error("expected error when disabled")
+	}
+}
+
+func TestRedisCache_GetMetricsSnapshot_Disabled(t *testing.T) {
+	c := &RedisCache{enabled: false}
+	if _, err := c.GetMetricsSnapshot(context.Background()); err == nil {
+		t.Error("expected error when disabled")
 	}
 }

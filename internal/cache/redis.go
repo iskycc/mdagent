@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
 )
@@ -220,6 +221,32 @@ func (c *RedisCache) AppendLog(ctx context.Context, channelUserID string, log re
 	return err
 }
 
+func (c *RedisCache) SetMetricsSnapshot(ctx context.Context, snapshots []metrics.MetricSnapshot) error {
+	if !c.enabled {
+		return fmt.Errorf("redis disabled")
+	}
+	raw, err := jsonMarshal(snapshots)
+	if err != nil {
+		return err
+	}
+	return c.client.Set(ctx, metricsSnapshotKey(), raw, 5*time.Minute).Err()
+}
+
+func (c *RedisCache) GetMetricsSnapshot(ctx context.Context) ([]metrics.MetricSnapshot, error) {
+	if !c.enabled {
+		return nil, fmt.Errorf("redis disabled")
+	}
+	raw, err := c.client.Get(ctx, metricsSnapshotKey()).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	var snapshots []metrics.MetricSnapshot
+	if err := jsonUnmarshal(raw, &snapshots); err != nil {
+		return nil, err
+	}
+	return snapshots, nil
+}
+
 func userKey(channelUserID string) string {
 	return fmt.Sprintf("md:user:%s", channelUserID)
 }
@@ -230,4 +257,8 @@ func convKey(channelUserID string, conversationID int64) string {
 
 func logsKey(channelUserID string) string {
 	return fmt.Sprintf("md:logs:%s", channelUserID)
+}
+
+func metricsSnapshotKey() string {
+	return "md:metrics:snapshot"
 }

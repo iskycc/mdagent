@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
 )
@@ -23,6 +24,9 @@ type Cache interface {
 	GetRecentLogs(ctx context.Context, channelUserID string) ([]repository.UserCallLog, error)
 	SetRecentLogs(ctx context.Context, channelUserID string, logs []repository.UserCallLog) error
 	AppendLog(ctx context.Context, channelUserID string, log repository.UserCallLog) error
+
+	SetMetricsSnapshot(ctx context.Context, snapshots []metrics.MetricSnapshot) error
+	GetMetricsSnapshot(ctx context.Context) ([]metrics.MetricSnapshot, error)
 }
 
 // NopCache 是一个始终返回 error 的 Cache，用于测试。
@@ -52,4 +56,10 @@ func (NopCache) SetRecentLogs(context.Context, string, []repository.UserCallLog)
 }
 func (NopCache) AppendLog(context.Context, string, repository.UserCallLog) error {
 	return fmt.Errorf("nop")
+}
+func (NopCache) SetMetricsSnapshot(context.Context, []metrics.MetricSnapshot) error {
+	return fmt.Errorf("nop")
+}
+func (NopCache) GetMetricsSnapshot(context.Context) ([]metrics.MetricSnapshot, error) {
+	return nil, fmt.Errorf("nop")
 }
