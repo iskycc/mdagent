@@ -41,6 +41,13 @@ type Store interface {
 	LoadRecent(limit int) ([]Sample, error)
 }
 
+// SnapshotCache 定义指标快照的缓存接口。
+// 实现通常由 Redis 等外部缓存提供，本包不依赖具体实现。
+type SnapshotCache interface {
+	SetMetricsSnapshot(ctx context.Context, snapshots []MetricSnapshot) error
+	GetMetricsSnapshot(ctx context.Context) ([]MetricSnapshot, error)
+}
+
 // metric 是内部聚合结构。
 type metric struct {
 	mu       sync.Mutex
@@ -94,6 +101,7 @@ type Recorder struct {
 	metrics map[string]*metric
 
 	store         Store
+	snapshotCache SnapshotCache
 	pendingMu     sync.Mutex
 	pending       []Sample
 	flushInterval time.Duration // 仅在构造函数中设置，构造后不可变
@@ -249,8 +257,22 @@ func (r *Recorder) Start(name string) *Span {
 	return &Span{recorder: r, name: name, start: time.Now()}
 }
 
+// SetSnapshotCache 设置用于缓存指标快照的 Cache。
+func (r *Recorder) SetSnapshotCache(c SnapshotCache) {
+	r.snapshotCache = c
+}
+
 // Snapshot 返回当前所有指标快照。
+// 如果配置了 SnapshotCache 且缓存命中，则直接返回缓存数据；
+// 否则计算内存指标并尝试将结果写回缓存（错误被忽略，由调用方降级）。
 func (r *Recorder) Snapshot() []MetricSnapshot {
+	if r.snapshotCache != nil {
+		cached, err := r.snapshotCache.GetMetricsSnapshot(context.Background())
+		if err == nil && len(cached) > 0 {
+			return cached
+		}
+	}
+
 	r.mu.RLock()
 	names := make([]string, 0, len(r.metrics))
 	for name := range r.metrics {
@@ -261,6 +283,10 @@ func (r *Recorder) Snapshot() []MetricSnapshot {
 	result := make([]MetricSnapshot, 0, len(names))
 	for _, name := range names {
 		result = append(result, r.get(name).snapshot(name))
+	}
+
+	if r.snapshotCache != nil {
+		_ = r.snapshotCache.SetMetricsSnapshot(context.Background(), result)
 	}
 	return result
 }
@@ -296,6 +322,11 @@ func Start(name string) *Span {
 // Snapshot 返回默认 Recorder 的当前快照。
 func Snapshot() []MetricSnapshot {
 	return global.Snapshot()
+}
+
+// SetSnapshotCache 为默认 Recorder 设置快照缓存。
+func SetSnapshotCache(c SnapshotCache) {
+	global.SetSnapshotCache(c)
 }
 
 // Init 使用指定的 Store 初始化默认 Recorder 并恢复历史样本。

@@ -307,3 +307,109 @@ func TestInitLoadError(t *testing.T) {
 		t.Fatalf("expected load error")
 	}
 }
+
+// fakeSnapshotCache 是一个用于测试的 SnapshotCache 实现。
+type fakeSnapshotCache struct {
+	mu        sync.Mutex
+	getData   []MetricSnapshot
+	getErr    error
+	setCalled bool
+	setData   []MetricSnapshot
+}
+
+func (f *fakeSnapshotCache) SetMetricsSnapshot(ctx context.Context, snapshots []MetricSnapshot) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setCalled = true
+	f.setData = snapshots
+	return nil
+}
+
+func (f *fakeSnapshotCache) GetMetricsSnapshot(ctx context.Context) ([]MetricSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.getData, nil
+}
+
+func TestRecorder_Snapshot_UsesCache(t *testing.T) {
+	r := NewRecorder()
+	cache := &fakeSnapshotCache{
+		getData: []MetricSnapshot{
+			{Name: "cached", Count: 10, Success: 9, SuccessRate: 0.9},
+		},
+	}
+	r.SetSnapshotCache(cache)
+
+	snapshots := r.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snapshots))
+	}
+	if snapshots[0].Name != "cached" {
+		t.Errorf("expected cached snapshot, got %s", snapshots[0].Name)
+	}
+	if snapshots[0].Count != 10 {
+		t.Errorf("expected count 10, got %d", snapshots[0].Count)
+	}
+
+	cache.mu.Lock()
+	setCalled := cache.setCalled
+	cache.mu.Unlock()
+	if setCalled {
+		t.Errorf("cache hit should not trigger SetMetricsSnapshot")
+	}
+}
+
+func TestRecorder_Snapshot_MissWritesCache(t *testing.T) {
+	r := NewRecorder()
+	r.Record("api", 100*time.Millisecond, true)
+	r.Record("api", 200*time.Millisecond, false)
+
+	cache := &fakeSnapshotCache{}
+	r.SetSnapshotCache(cache)
+
+	snapshots := r.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snapshots))
+	}
+	if snapshots[0].Name != "api" {
+		t.Errorf("expected name api, got %s", snapshots[0].Name)
+	}
+	if snapshots[0].Count != 2 {
+		t.Errorf("expected count 2, got %d", snapshots[0].Count)
+	}
+
+	cache.mu.Lock()
+	setCalled := cache.setCalled
+	setData := cache.setData
+	cache.mu.Unlock()
+	if !setCalled {
+		t.Fatalf("expected SetMetricsSnapshot to be called")
+	}
+	if len(setData) != 1 || setData[0].Name != "api" {
+		t.Errorf("unexpected cached data: %v", setData)
+	}
+}
+
+func TestSetSnapshotCache_Global(t *testing.T) {
+	origGlobal := global
+	defer func() { global = origGlobal }()
+
+	global = NewRecorder()
+	cache := &fakeSnapshotCache{
+		getData: []MetricSnapshot{
+			{Name: "global-cached", Count: 5, Success: 5, SuccessRate: 1.0},
+		},
+	}
+	SetSnapshotCache(cache)
+
+	snapshots := Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snapshots))
+	}
+	if snapshots[0].Name != "global-cached" {
+		t.Errorf("expected global-cached snapshot, got %s", snapshots[0].Name)
+	}
+}
