@@ -210,6 +210,19 @@ func (r *Recorder) Run(ctx context.Context) {
 	}()
 }
 
+// FlushContext 与 Flush 相同，但可以通过 ctx 取消等待。
+// 如果 ctx 在 flush 完成前取消，返回 ctx.Err()；实际的 Store.Save 仍在后台运行。
+func (r *Recorder) FlushContext(ctx context.Context) error {
+	done := make(chan error, 1)
+	go func() { done <- r.Flush() }()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-done:
+		return err
+	}
+}
+
 // Flush 将 pending 中的样本持久化到 Store；失败时将样本重新放回 pending。
 func (r *Recorder) Flush() error {
 	r.flushMu.Lock()
@@ -356,6 +369,11 @@ func Run(ctx context.Context) {
 // Flush 立即将默认 Recorder 的 pending 样本刷新到 Store。
 func Flush() error {
 	return global.Flush()
+}
+
+// FlushContext 立即刷新默认 Recorder，支持通过 ctx 取消等待。
+func FlushContext(ctx context.Context) error {
+	return global.FlushContext(ctx)
 }
 
 func percentile(sorted []float64, p float64) float64 {

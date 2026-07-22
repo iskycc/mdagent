@@ -18,6 +18,8 @@ import (
 )
 
 func TestRun_StartAndShutdown(t *testing.T) {
+	defer func() { _ = metrics.Init(nil) }()
+
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create sqlmock failed: %v", err)
@@ -65,6 +67,8 @@ func TestRun_StartAndShutdown(t *testing.T) {
 }
 
 func TestRun_ReturnsListenError(t *testing.T) {
+	defer func() { _ = metrics.Init(nil) }()
+
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create sqlmock failed: %v", err)

@@ -109,7 +109,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := metrics.Flush(); err != nil {
+	if err := metrics.FlushContext(shutdownCtx); err != nil {
 		log.Printf("flush metrics failed: %v", err)
 	}
 	if err := persistQueue.Flush(shutdownCtx); err != nil {
