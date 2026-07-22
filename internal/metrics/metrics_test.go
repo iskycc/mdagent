@@ -199,7 +199,8 @@ func TestFlushFailureKeepsPendingSamples(t *testing.T) {
 
 func TestPeriodicFlush(t *testing.T) {
 	fs := &fakeStore{}
-	r := NewRecorderWithStoreAndOptions(fs, 50*time.Millisecond, 1000)
+	r := NewRecorderWithStore(fs)
+	r.flushInterval = 50 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r.Run(ctx)

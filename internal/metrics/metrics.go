@@ -4,6 +4,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -105,26 +106,18 @@ type Recorder struct {
 
 // NewRecorder 创建一个新的 Recorder。
 func NewRecorder() *Recorder {
-	return NewRecorderWithStoreAndOptions(nil, 30*time.Second, 1000)
+	return &Recorder{
+		metrics:       make(map[string]*metric),
+		flushInterval: 30 * time.Second,
+		maxPending:    1000,
+		stopCh:        make(chan struct{}),
+	}
 }
 
 // NewRecorderWithStore 创建一个有持久化能力的 Recorder。
 func NewRecorderWithStore(store Store) *Recorder {
-	return NewRecorderWithStoreAndOptions(store, 30*time.Second, 1000)
-}
-
-// NewRecorderWithStoreAndOptions 创建一个有持久化能力并可自定义刷新参数的 Recorder。
-// flushInterval 与 maxPending 仅在构造时设置，构造后不可修改。
-func NewRecorderWithStoreAndOptions(store Store, flushInterval time.Duration, maxPending int) *Recorder {
-	r := &Recorder{
-		metrics:       make(map[string]*metric),
-		flushInterval: flushInterval,
-		maxPending:    maxPending,
-		store:         store,
-	}
-	if store != nil {
-		r.stopCh = make(chan struct{})
-	}
+	r := NewRecorder()
+	r.store = store
 	return r
 }
 
@@ -140,14 +133,12 @@ func (r *Recorder) get(name string) *metric {
 }
 
 // Record 记录一次调用耗时与结果。
-// 当 pending 达到 maxPending 时，会同步触发 Flush；Flush 失败时错误会被静默忽略
-// （本包不依赖外部 logger），调用方如关注持久化结果可主动调用 Flush()。
+// 先更新内存指标，再将样本追加到 pending 队列；即使当前没有 Store，样本也会暂存在
+// pending 中等待后续 Flush。当 pending 达到 maxPending 时，会同步触发 Flush；
+// Flush 失败时错误会被静默忽略（本包不依赖外部 logger），调用方如关注持久化结果
+// 可主动调用 Flush()。
 func (r *Recorder) Record(name string, d time.Duration, success bool) {
 	r.get(name).record(d, success)
-
-	if r.store == nil {
-		return
-	}
 
 	r.pendingMu.Lock()
 	r.pending = append(r.pending, Sample{
@@ -160,7 +151,8 @@ func (r *Recorder) Record(name string, d time.Duration, success bool) {
 	r.pendingMu.Unlock()
 
 	if shouldFlush {
-		r.Flush()
+		// Synchronous flush; errors are silently ignored.
+		_ = r.Flush()
 	}
 }
 
@@ -171,9 +163,10 @@ func (r *Recorder) Init() error {
 	}
 	samples, err := r.store.LoadRecent(maxSamples)
 	if err != nil {
-		return err
+		return fmt.Errorf("load metric samples failed: %w", err)
 	}
-	// LoadRecent 通常按时间降序返回，需按时间升序回放以保证内存中样本顺序正确。
+	// LoadRecent 通常按时间降序返回（最新的在前）。需按时间升序回放，
+	// 使最老的样本先被记录，保证内存中 duration 列表按时间先后排列。
 	for i := len(samples) - 1; i >= 0; i-- {
 		s := samples[i]
 		r.get(s.Name).record(time.Duration(s.DurationMs*1e6), s.Success)
@@ -230,10 +223,11 @@ func (r *Recorder) Flush() error {
 
 	if err := r.store.Save(toSave); err != nil {
 		r.pendingMu.Lock()
-		// 失败样本放到队列头部，溢出时丢弃 newest samples。
+		// 失败样本放回队列头部；若超过两倍 maxPending，则丢弃最老的样本，
+		// 保留最新的样本。
 		r.pending = append(toSave, r.pending...)
-		if len(r.pending) > r.maxPending {
-			r.pending = r.pending[:r.maxPending]
+		if len(r.pending) > r.maxPending*2 {
+			r.pending = r.pending[len(r.pending)-r.maxPending*2:]
 		}
 		r.pendingMu.Unlock()
 		return err
@@ -306,7 +300,7 @@ func Snapshot() []MetricSnapshot {
 
 // Init 使用指定的 Store 初始化默认 Recorder 并恢复历史样本。
 func Init(store Store) error {
-	global = NewRecorderWithStore(store)
+	global.store = store
 	return global.Init()
 }
 
