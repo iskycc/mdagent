@@ -53,8 +53,8 @@ func TestMetricSampleRepo_Save_Empty(t *testing.T) {
 func TestMetricSampleRepo_LoadRecent(t *testing.T) {
 	r, mock := newMetricSampleRepoMock(t)
 	rows := sqlmock.NewRows([]string{"name", "duration_ms", "success", "created_at"}).
-		AddRow("op1", 1.5, 1, time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)).
-		AddRow("op2", 2.5, 0, time.Date(2026, 7, 22, 10, 1, 0, 0, time.UTC))
+		AddRow("op2", 2.5, 0, time.Date(2026, 7, 22, 10, 1, 0, 0, time.UTC)).
+		AddRow("op1", 1.5, 1, time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC))
 	mock.ExpectQuery("SELECT name, duration_ms, success, created_at FROM metric_samples").WithArgs(10).WillReturnRows(rows)
 
 	samples, err := r.LoadRecent(10)
@@ -64,10 +64,10 @@ func TestMetricSampleRepo_LoadRecent(t *testing.T) {
 	if len(samples) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(samples))
 	}
-	if samples[0].Name != "op1" || samples[0].DurationMs != 1.5 || !samples[0].Success {
+	if samples[0].Name != "op2" || samples[0].DurationMs != 2.5 || samples[0].Success {
 		t.Errorf("unexpected first sample: %+v", samples[0])
 	}
-	if samples[1].Name != "op2" || samples[1].DurationMs != 2.5 || samples[1].Success {
+	if samples[1].Name != "op1" || samples[1].DurationMs != 1.5 || !samples[1].Success {
 		t.Errorf("unexpected second sample: %+v", samples[1])
 	}
 }

@@ -61,7 +61,7 @@ func (r *MetricSampleRepo) Save(samples []MetricSample) error {
 	return err
 }
 
-// LoadRecent 查询最近的 limit 条采样记录，按时间升序返回。
+// LoadRecent 查询最近的 limit 条采样记录，按时间降序返回。
 func (r *MetricSampleRepo) LoadRecent(limit int) ([]MetricSample, error) {
 	if limit <= 0 {
 		limit = 100
@@ -69,7 +69,7 @@ func (r *MetricSampleRepo) LoadRecent(limit int) ([]MetricSample, error) {
 	rows, err := r.db.Query(`
 		SELECT name, duration_ms, success, created_at
 		FROM metric_samples
-		ORDER BY created_at ASC
+		ORDER BY created_at DESC
 		LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
