@@ -12,6 +12,7 @@ import (
 	"miaodi-agent/internal/config"
 	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/handler"
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/persist"
 	"miaodi-agent/internal/repository"
@@ -28,6 +29,11 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 
 	if err := initRepos(db); err != nil {
 		return fmt.Errorf("init repositories failed: %w", err)
+	}
+
+	metricSampleRepo := repository.NewMetricSampleRepo(db)
+	if err := metricSampleRepo.EnsureTable(); err != nil {
+		return fmt.Errorf("ensure metric_samples table failed: %w", err)
 	}
 
 	miaodi := client.NewMiaodiClientWithEndpoints(cfg.MiaodiAPIBaseURL, cfg.MiaodiMailAPIURL, cfg.MiaodiPictureAPIURL)
@@ -49,6 +55,13 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	redisCache := cache.NewRedisCache(redisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisEnabled)
 	persistQueue := persist.NewPersistQueue(convRepo, callLogRepo, deadLetterRepo, 1024)
 	persistQueue.Run(ctx)
+
+	metricStore := &metricSampleStoreAdapter{repo: metricSampleRepo}
+	if err := metrics.Init(metricStore); err != nil {
+		log.Printf("metrics init failed: %v", err)
+	}
+	metrics.SetSnapshotCache(redisCache)
+	metrics.Run(ctx)
 
 	if err := seedCache(ctx, redisCache, convRepo, userRepo); err != nil {
 		log.Printf("seed cache failed: %v", err)
@@ -96,6 +109,9 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if err := metrics.Flush(); err != nil {
+		log.Printf("flush metrics failed: %v", err)
+	}
 	if err := persistQueue.Flush(shutdownCtx); err != nil {
 		log.Printf("flush persist queue failed: %v", err)
 	}
@@ -243,4 +259,39 @@ func initRepos(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// metricSampleStoreAdapter adapts repository.MetricSampleRepo to metrics.Store.
+type metricSampleStoreAdapter struct {
+	repo *repository.MetricSampleRepo
+}
+
+func (a *metricSampleStoreAdapter) Save(samples []metrics.Sample) error {
+	repoSamples := make([]repository.MetricSample, len(samples))
+	for i, s := range samples {
+		repoSamples[i] = repository.MetricSample{
+			Name:       s.Name,
+			DurationMs: s.DurationMs,
+			Success:    s.Success,
+			CreatedAt:  s.CreatedAt,
+		}
+	}
+	return a.repo.Save(repoSamples)
+}
+
+func (a *metricSampleStoreAdapter) LoadRecent(limit int) ([]metrics.Sample, error) {
+	repoSamples, err := a.repo.LoadRecent(limit)
+	if err != nil {
+		return nil, err
+	}
+	samples := make([]metrics.Sample, len(repoSamples))
+	for i, s := range repoSamples {
+		samples[i] = metrics.Sample{
+			Name:       s.Name,
+			DurationMs: s.DurationMs,
+			Success:    s.Success,
+			CreatedAt:  s.CreatedAt,
+		}
+	}
+	return samples, nil
 }

@@ -11,6 +11,7 @@ import (
 
 	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/config"
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/pkg/openai"
@@ -33,6 +34,8 @@ func TestRun_StartAndShutdown(t *testing.T) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS llm_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS persist_dead_letters").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS processed_messages").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS metric_samples").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT name, duration_ms, success, created_at").WillReturnRows(sqlmock.NewRows([]string{"name", "duration_ms", "success", "created_at"}))
 
 	cfg := &config.Config{
 		Port:          "0",
@@ -78,6 +81,8 @@ func TestRun_ReturnsListenError(t *testing.T) {
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS llm_call_log").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS persist_dead_letters").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS processed_messages").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS metric_samples").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT name, duration_ms, success, created_at").WillReturnRows(sqlmock.NewRows([]string{"name", "duration_ms", "success", "created_at"}))
 
 	cfg := &config.Config{
 		Port:          "bad port",
@@ -178,6 +183,14 @@ func (f *fakeCache) SetRecentLogs(context.Context, string, []repository.UserCall
 
 func (f *fakeCache) AppendLog(context.Context, string, repository.UserCallLog) error {
 	return errors.New("not implemented")
+}
+
+func (f *fakeCache) SetMetricsSnapshot(context.Context, []metrics.MetricSnapshot) error {
+	return errors.New("not implemented")
+}
+
+func (f *fakeCache) GetMetricsSnapshot(context.Context) ([]metrics.MetricSnapshot, error) {
+	return nil, errors.New("not implemented")
 }
 
 // Ensure fakeCache implements cache.Cache at compile time.
