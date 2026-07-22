@@ -2,11 +2,13 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
@@ -667,8 +669,8 @@ func TestRedisCache_GetMetricsSnapshot_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := c.GetMetricsSnapshot(ctx)
-	if err == nil {
-		t.Fatal("expected error for missing snapshot")
+	if !errors.Is(err, redis.Nil) {
+		t.Fatalf("expected redis.Nil, got %v", err)
 	}
 }
 

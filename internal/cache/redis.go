@@ -13,7 +13,10 @@ import (
 	"miaodi-agent/internal/repository"
 )
 
-const ttl = 24 * time.Hour
+const (
+	ttl                = 24 * time.Hour
+	metricsSnapshotTTL = 5 * time.Minute
+)
 
 // jsonMarshal / jsonUnmarshal 允许测试时替换，以覆盖序列化/反序列化错误分支。
 var (
@@ -229,7 +232,7 @@ func (c *RedisCache) SetMetricsSnapshot(ctx context.Context, snapshots []metrics
 	if err != nil {
 		return err
 	}
-	return c.client.Set(ctx, metricsSnapshotKey(), raw, 5*time.Minute).Err()
+	return c.client.Set(ctx, metricsSnapshotKey(), raw, metricsSnapshotTTL).Err()
 }
 
 func (c *RedisCache) GetMetricsSnapshot(ctx context.Context) ([]metrics.MetricSnapshot, error) {
