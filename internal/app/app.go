@@ -12,6 +12,7 @@ import (
 	"miaodi-agent/internal/config"
 	"miaodi-agent/internal/debuglog"
 	"miaodi-agent/internal/handler"
+	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/persist"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/internal/service"
@@ -37,8 +38,8 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	convRepo := repository.NewConversationRepo(db)
 	pendingRepo := repository.NewPendingImageRepo(db)
 	callLogRepo := repository.NewCallLogRepo(db)
-	startConversationCleanup(ctx, convRepo)
-	startCallLogCleanup(ctx, callLogRepo)
+	startConversationCleanup(ctx, convRepo, time.Hour)
+	startCallLogCleanup(ctx, callLogRepo, time.Hour)
 
 	redisAddr := cfg.RedisHost + ":" + cfg.RedisPort
 	redisCache := cache.NewRedisCache(redisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisEnabled)
@@ -98,8 +99,16 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	return nil
 }
 
-func startConversationCleanup(ctx context.Context, convRepo *repository.ConversationRepo) {
-	ticker := time.NewTicker(time.Hour)
+type conversationCleaner interface {
+	CleanupExpiredMessages(cutoff time.Time) (int, error)
+}
+
+type callLogCleaner interface {
+	CleanupOlderThan(days int) (int64, error)
+}
+
+func startConversationCleanup(ctx context.Context, convRepo conversationCleaner, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -121,8 +130,8 @@ func startConversationCleanup(ctx context.Context, convRepo *repository.Conversa
 	}()
 }
 
-func startCallLogCleanup(ctx context.Context, callLogRepo *repository.CallLogRepo) {
-	ticker := time.NewTicker(time.Hour)
+func startCallLogCleanup(ctx context.Context, callLogRepo callLogCleaner, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -144,7 +153,15 @@ func startCallLogCleanup(ctx context.Context, callLogRepo *repository.CallLogRep
 	}()
 }
 
-func seedCache(ctx context.Context, c cache.Cache, convRepo *repository.ConversationRepo, userRepo *repository.UserRepo) error {
+type conversationSeeder interface {
+	ListActiveSince(cutoff time.Time) ([]repository.ConversationWithMessages, error)
+}
+
+type userSeeder interface {
+	Get(channelUserID string) (*model.User, error)
+}
+
+func seedCache(ctx context.Context, c cache.Cache, convRepo conversationSeeder, userRepo userSeeder) error {
 	if !c.Available(ctx) {
 		return fmt.Errorf("redis not available")
 	}

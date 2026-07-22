@@ -97,3 +97,27 @@ func TestPendingImageRepo_ListPending_ScanError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestPendingImageRepo_ListPending_RowsErr(t *testing.T) {
+	r, mock := newPendingImageRepoMock(t)
+	createdAt := time.Now()
+	rows := sqlmock.NewRows([]string{"id", "apikey", "image_url", "book", "chara", "title", "status", "created_at"}).
+		AddRow(1, "key1", "http://img", "b", "c", "t", "pending", createdAt).
+		CloseError(sqlmock.ErrCancelled)
+	mock.ExpectQuery("SELECT id, apikey").WithArgs(10).WillReturnRows(rows)
+
+	_, err := r.ListPending(10)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestPendingImageRepo_ListPending_DefaultLimit(t *testing.T) {
+	r, mock := newPendingImageRepoMock(t)
+	mock.ExpectQuery("SELECT id, apikey").WithArgs(100).WillReturnRows(sqlmock.NewRows([]string{"id", "apikey", "image_url", "book", "chara", "title", "status", "created_at"}))
+
+	_, err := r.ListPending(0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

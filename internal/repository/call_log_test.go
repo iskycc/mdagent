@@ -235,3 +235,178 @@ func TestCallLogRepo_ByDate(t *testing.T) {
 		t.Errorf("expected 1 row, got %d", len(results))
 	}
 }
+
+func TestCallLogRepo_DailyStats_Empty(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(30).WillReturnRows(sqlmock.NewRows([]string{"date", "count"}))
+	stats, err := r.DailyStats(0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stats == nil || len(stats) != 0 {
+		t.Fatalf("expected empty stats, got %+v", stats)
+	}
+}
+
+func TestCallLogRepo_DailyStats_RowsErr(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"date", "count"}).AddRow("2026-06-30", 1).CloseError(sqlmock.ErrCancelled)
+	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(rows)
+	_, err := r.DailyStats(7)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_DailyStats_ParseDateValue_Unsupported(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"date", "count"}).AddRow(123, 1)
+	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(rows)
+	_, err := r.DailyStats(7)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_DailyStats_ParseDateValue_Bytes(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"date", "count"}).AddRow([]byte("2026-07-20"), 1)
+	mock.ExpectQuery(`SELECT DATE\(created_at\)`).WithArgs(7).WillReturnRows(rows)
+	stats, err := r.DailyStats(7)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stats) != 1 || stats[0].Date != "2026-07-20" {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestCallLogRepo_ActiveUsers_DefaultDays(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"count"}).AddRow(4)
+	mock.ExpectQuery(`SELECT COUNT\(DISTINCT channel_user_id\)`).WithArgs(30).WillReturnRows(rows)
+	c, err := r.ActiveUsers(0)
+	if err != nil || c != 4 {
+		t.Fatalf("unexpected result: %d %v", c, err)
+	}
+}
+
+func TestCallLogRepo_CleanupOlderThan_DefaultDays(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	mock.ExpectExec("DELETE FROM api_call_log WHERE created_at < ?").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 3))
+	deleted, err := r.CleanupOlderThan(0)
+	if err != nil || deleted != 3 {
+		t.Fatalf("unexpected result: %d %v", deleted, err)
+	}
+}
+
+func TestCallLogRepo_CleanupOlderThan_RowsAffectedError(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	mock.ExpectExec("DELETE FROM api_call_log WHERE created_at < ?").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewErrorResult(sqlmock.ErrCancelled))
+	_, err := r.CleanupOlderThan(30)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_RecentByUser_DefaultLimit(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log`).WithArgs("u1", 5).WillReturnRows(sqlmock.NewRows([]string{"action", "created_at"}))
+	_, err := r.RecentByUser("u1", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCallLogRepo_RecentByUser_UnderLimit(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log`).WithArgs("u1", 5).WillReturnRows(sqlmock.NewRows([]string{"action", "created_at"}))
+	_, err := r.RecentByUser("u1", -1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCallLogRepo_RecentByUser_RowsErr(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"action", "created_at"}).AddRow("put_text", time.Now()).CloseError(sqlmock.ErrCancelled)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log`).WithArgs("u1", 5).WillReturnRows(rows)
+	_, err := r.RecentByUser("u1", 5)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_RecentByUser_ScanError(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"action", "created_at"}).AddRow("put_text", "not-time")
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log`).WithArgs("u1", 5).WillReturnRows(rows)
+	_, err := r.RecentByUser("u1", 5)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_ByDate_InvalidDate(t *testing.T) {
+	r, _ := newCallLogRepoMock(t)
+	_, err := r.ByDate("u1", "not-a-date")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_ByDate_QueryError(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND created_at >= \? AND created_at < \?`).
+		WithArgs("u1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnError(sqlmock.ErrCancelled)
+	_, err := r.ByDate("u1", "2026-06-30")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_ByDate_ScanError(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"action", "created_at"}).AddRow("put_text", "not-time")
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND created_at >= \? AND created_at < \?`).
+		WithArgs("u1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(rows)
+	_, err := r.ByDate("u1", "2026-06-30")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCallLogRepo_ByDate_RowsErr(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	rows := sqlmock.NewRows([]string{"action", "created_at"}).AddRow("put_text", time.Now()).CloseError(sqlmock.ErrCancelled)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND created_at >= \? AND created_at < \?`).
+		WithArgs("u1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(rows)
+	_, err := r.ByDate("u1", "2026-06-30")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestParseDateValue_Time(t *testing.T) {
+	date, err := parseDateValue(time.Date(2026, 7, 20, 0, 0, 0, 0, timeutil.BeijingLocation()))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if date != "2026-07-20" {
+		t.Fatalf("unexpected date: %s", date)
+	}
+}
+
+func TestParseDateValue_String(t *testing.T) {
+	date, err := parseDateValue("2026-07-20")
+	if err != nil || date != "2026-07-20" {
+		t.Fatalf("unexpected result: %s %v", date, err)
+	}
+}
+
+func TestParseDateValue_Unsupported(t *testing.T) {
+	_, err := parseDateValue(123)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

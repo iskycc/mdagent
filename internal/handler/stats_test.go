@@ -110,3 +110,33 @@ func TestHandleStatsAPI_Error(t *testing.T) {
 		t.Fatalf("expected 500, got %d", rec.Code)
 	}
 }
+
+type failingStatsWriter struct {
+	headers http.Header
+	status  int
+}
+
+func (f *failingStatsWriter) Header() http.Header {
+	if f.headers == nil {
+		f.headers = make(http.Header)
+	}
+	return f.headers
+}
+
+func (f *failingStatsWriter) WriteHeader(status int) {
+	f.status = status
+}
+
+func (f *failingStatsWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestHandleStatsPage_ExecuteError(t *testing.T) {
+	h := NewStatsHandler(&fakeStatsProvider{data: &service.StatsData{TotalUsers: 10}})
+	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
+	w := &failingStatsWriter{}
+	h.handleStatsPage(w, req)
+	if w.headers.Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("expected html content type, got %v", w.headers)
+	}
+}

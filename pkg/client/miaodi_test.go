@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
@@ -234,3 +235,88 @@ func TestMiaodiClient_UpImage_DoError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// fakeMultipartWriter is a test double for the multipart building step.
+type fakeMultipartWriter struct {
+	writeFieldErr       error
+	createFormFileErr   error
+	createFormFileW     io.Writer
+	closeErr            error
+	formDataContentType string
+}
+
+func (f *fakeMultipartWriter) WriteField(_, _ string) error { return f.writeFieldErr }
+func (f *fakeMultipartWriter) CreateFormFile(_, _ string) (io.Writer, error) {
+	if f.createFormFileErr != nil {
+		return nil, f.createFormFileErr
+	}
+	if f.createFormFileW != nil {
+		return f.createFormFileW, nil
+	}
+	return &bytes.Buffer{}, nil
+}
+func (f *fakeMultipartWriter) Close() error                { return f.closeErr }
+func (f *fakeMultipartWriter) FormDataContentType() string { return f.formDataContentType }
+
+func TestMiaodiClient_UpImage_CreateFormFileError(t *testing.T) {
+	orig := newMultipartWriter
+	newMultipartWriter = func(io.Writer) multipartWriter {
+		return &fakeMultipartWriter{createFormFileErr: errors.New("create form file failed")}
+	}
+	defer func() { newMultipartWriter = orig }()
+
+	client := NewMiaodiClient()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jpg")
+	_ = os.WriteFile(path, []byte("imagebytes"), 0644)
+
+	_, err := client.UpImage("token", path)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestMiaodiClient_UpImage_WriteContentError(t *testing.T) {
+	orig := newMultipartWriter
+	newMultipartWriter = func(io.Writer) multipartWriter {
+		return &fakeMultipartWriter{createFormFileW: &errorWriter{err: errors.New("write content failed")}}
+	}
+	defer func() { newMultipartWriter = orig }()
+
+	client := NewMiaodiClient()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jpg")
+	_ = os.WriteFile(path, []byte("imagebytes"), 0644)
+
+	_, err := client.UpImage("token", path)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestMiaodiClient_UpImage_CloseWriterError(t *testing.T) {
+	orig := newMultipartWriter
+	newMultipartWriter = func(io.Writer) multipartWriter {
+		return &fakeMultipartWriter{
+			createFormFileW: &bytes.Buffer{},
+			closeErr:        errors.New("close writer failed"),
+		}
+	}
+	defer func() { newMultipartWriter = orig }()
+
+	client := NewMiaodiClient()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jpg")
+	_ = os.WriteFile(path, []byte("imagebytes"), 0644)
+
+	_, err := client.UpImage("token", path)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+type errorWriter struct {
+	err error
+}
+
+func (e *errorWriter) Write(_ []byte) (int, error) { return 0, e.err }

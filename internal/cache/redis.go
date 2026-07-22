@@ -14,6 +14,12 @@ import (
 
 const ttl = 24 * time.Hour
 
+// jsonMarshal / jsonUnmarshal 允许测试时替换，以覆盖序列化/反序列化错误分支。
+var (
+	jsonMarshal   = json.Marshal
+	jsonUnmarshal = json.Unmarshal
+)
+
 // RedisCache 是基于 go-redis 的 Cache 实现。
 type RedisCache struct {
 	client  *redis.Client
@@ -25,10 +31,12 @@ func NewRedisCache(addr, password string, db int, enabled bool) *RedisCache {
 	if !enabled {
 		return &RedisCache{enabled: false}
 	}
-	return &RedisCache{
-		client:  redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: db}),
-		enabled: true,
-	}
+	return NewRedisCacheWithOptions(&redis.Options{Addr: addr, Password: password, DB: db})
+}
+
+// NewRedisCacheWithOptions 使用自定义 redis.Options 创建缓存，主要用于测试。
+func NewRedisCacheWithOptions(opts *redis.Options) *RedisCache {
+	return &RedisCache{client: redis.NewClient(opts), enabled: true}
 }
 
 func (c *RedisCache) Available(ctx context.Context) bool {
@@ -47,7 +55,7 @@ func (c *RedisCache) GetUser(ctx context.Context, channelUserID string) (*model.
 		return nil, err
 	}
 	var user model.User
-	if err := json.Unmarshal(raw, &user); err != nil {
+	if err := jsonUnmarshal(raw, &user); err != nil {
 		return nil, err
 	}
 	return &user, nil
@@ -57,7 +65,7 @@ func (c *RedisCache) SetUser(ctx context.Context, user *model.User) error {
 	if !c.enabled {
 		return fmt.Errorf("redis disabled")
 	}
-	raw, err := json.Marshal(user)
+	raw, err := jsonMarshal(user)
 	if err != nil {
 		return err
 	}
@@ -83,7 +91,7 @@ func (c *RedisCache) GetMessages(ctx context.Context, channelUserID string, conv
 	msgs := make([]repository.StoredChatMessage, 0, len(elems))
 	for _, elem := range elems {
 		var msg repository.StoredChatMessage
-		if err := json.Unmarshal([]byte(elem), &msg); err != nil {
+		if err := jsonUnmarshal([]byte(elem), &msg); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, msg)
@@ -101,7 +109,7 @@ func (c *RedisCache) SetMessages(ctx context.Context, channelUserID string, conv
 	if len(msgs) > 0 {
 		elems := make([]interface{}, 0, len(msgs))
 		for _, msg := range msgs {
-			raw, err := json.Marshal(msg)
+			raw, err := jsonMarshal(msg)
 			if err != nil {
 				return err
 			}
@@ -124,7 +132,7 @@ func (c *RedisCache) AppendMessages(ctx context.Context, channelUserID string, c
 	key := convKey(channelUserID, conversationID)
 	elems := make([]interface{}, 0, len(msgs))
 	for _, msg := range msgs {
-		raw, err := json.Marshal(msg)
+		raw, err := jsonMarshal(msg)
 		if err != nil {
 			return err
 		}
@@ -163,7 +171,7 @@ func (c *RedisCache) GetRecentLogs(ctx context.Context, channelUserID string) ([
 	logs := make([]repository.UserCallLog, 0, len(elems))
 	for _, elem := range elems {
 		var log repository.UserCallLog
-		if err := json.Unmarshal([]byte(elem), &log); err != nil {
+		if err := jsonUnmarshal([]byte(elem), &log); err != nil {
 			return nil, err
 		}
 		logs = append(logs, log)
@@ -182,7 +190,7 @@ func (c *RedisCache) SetRecentLogs(ctx context.Context, channelUserID string, lo
 		// logs[0] 是最新的，所以从末尾开始 LPUSH，保证列表顺序与入参一致。
 		elems := make([]interface{}, 0, len(logs))
 		for i := len(logs) - 1; i >= 0; i-- {
-			raw, err := json.Marshal(logs[i])
+			raw, err := jsonMarshal(logs[i])
 			if err != nil {
 				return err
 			}
@@ -199,7 +207,7 @@ func (c *RedisCache) AppendLog(ctx context.Context, channelUserID string, log re
 	if !c.enabled {
 		return fmt.Errorf("redis disabled")
 	}
-	raw, err := json.Marshal(log)
+	raw, err := jsonMarshal(log)
 	if err != nil {
 		return err
 	}

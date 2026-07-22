@@ -1,8 +1,12 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -208,5 +212,172 @@ func TestCreateChatCompletion_MarshalError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// captureLog redirects the default logger output and returns the captured bytes.
+func captureLog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+	fn()
+	return buf.String()
+}
+
+type errorReadBody struct {
+	err error
+}
+
+func (e *errorReadBody) Read(_ []byte) (int, error) { return 0, e.err }
+func (e *errorReadBody) Close() error               { return nil }
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestCreateChatCompletion_ReadBodyError(t *testing.T) {
+	client := NewClient("test-key", "http://any")
+	client.httpClient = &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       &errorReadBody{err: errors.New("read body failed")},
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: "m"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestCreateChatCompletion_DebugRequestLog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := ChatCompletionResponse{
+			Choices: []ChatCompletionChoice{
+				{Message: ChatMessage{Role: "assistant", Content: "hi"}, FinishReason: "stop"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL)
+	client.SetDebug(true)
+
+	out := captureLog(t, func() {
+		_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{
+			Model:    "m",
+			Messages: []ChatMessage{{Role: "user", Content: "hello"}},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "openai request url=") {
+		t.Errorf("expected request log, got: %s", out)
+	}
+}
+
+func TestCreateChatCompletion_DebugRequestFailedLog(t *testing.T) {
+	client := NewClient("test-key", "http://any")
+	client.SetDebug(true)
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return nil, errors.New("network down")
+	})}
+
+	out := captureLog(t, func() {
+		_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: "m"})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	if !strings.Contains(out, "openai request failed url=") {
+		t.Errorf("expected request failed log, got: %s", out)
+	}
+}
+
+func TestCreateChatCompletion_DebugNonOKLog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, "bad request body")
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL)
+	client.SetDebug(true)
+
+	out := captureLog(t, func() {
+		_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: "m"})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	if !strings.Contains(out, "openai error response status=") {
+		t.Errorf("expected error response log, got: %s", out)
+	}
+}
+
+func TestCreateChatCompletion_DebugAPIErrorLog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := ChatCompletionResponse{Error: &struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+		}{Message: "rate limited", Type: "rate_limit", Code: "429"}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewClient("test-key", server.URL)
+	client.SetDebug(true)
+
+	out := captureLog(t, func() {
+		_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: "m"})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	if !strings.Contains(out, "openai api error") {
+		t.Errorf("expected api error log, got: %s", out)
+	}
+}
+
+func TestGetDebugFromEnv_Variants(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"TRUE", true},
+		{"yes", true},
+		{"YES", true},
+		{"on", true},
+		{"ON", true},
+		{"", false},
+		{"false", false},
+		{"no", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			if tc.value != "" {
+				os.Setenv("OPENAI_DEBUG", tc.value)
+				defer os.Unsetenv("OPENAI_DEBUG")
+			} else {
+				os.Unsetenv("OPENAI_DEBUG")
+			}
+			if got := getDebugFromEnv(); got != tc.want {
+				t.Errorf("getDebugFromEnv(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
 	}
 }

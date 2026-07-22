@@ -11,6 +11,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 
+	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/openai"
 )
 
@@ -249,5 +250,250 @@ func TestConversationRepo_Clear(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+func TestConversationRepo_ListActiveSince(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := time.Date(2026, 7, 19, 12, 0, 0, 0, timeutil.BeijingLocation())
+	raw := `[{"role":"user","content":"hi","created_at":"2026-07-19T12:01:00+08:00"}]`
+	rows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+		AddRow("u1", int64(1), raw, cutoff)
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(rows)
+
+	list, err := r.ListActiveSince(cutoff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 1 || list[0].ChannelUserID != "u1" || len(list[0].Messages) != 1 {
+		t.Fatalf("unexpected list: %+v", list)
+	}
+}
+
+func TestConversationRepo_ListActiveSince_LegacyFormat(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := time.Date(2026, 7, 19, 12, 0, 0, 0, timeutil.BeijingLocation())
+	raw := `[{"role":"user","content":"legacy"}]`
+	rows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+		AddRow("u1", int64(1), raw, cutoff)
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(rows)
+
+	list, err := r.ListActiveSince(cutoff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 1 || len(list[0].Messages) != 1 {
+		t.Fatalf("unexpected list: %+v", list)
+	}
+}
+
+func TestConversationRepo_ListActiveSince_QueryError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnError(sqlmock.ErrCancelled)
+	_, err := r.ListActiveSince(timeutil.Now())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_ListActiveSince_ScanError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	rows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+		AddRow("u1", int64(1), "not json", timeutil.Now())
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(rows)
+	_, err := r.ListActiveSince(timeutil.Now())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_GetStoredMessages_Empty(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	mock.ExpectQuery("SELECT messages, updated_at FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnError(sql.ErrNoRows)
+	msgs, err := r.GetStoredMessages("u1", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected empty messages, got %d", len(msgs))
+	}
+}
+
+func TestConversationRepo_GetStoredMessages_Existing(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	raw := `[{"role":"user","content":"hi","created_at":"2026-07-19T12:00:00+08:00"}]`
+	rows := sqlmock.NewRows([]string{"messages", "updated_at"}).AddRow(raw, timeutil.Now())
+	mock.ExpectQuery("SELECT messages, updated_at FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnRows(rows)
+
+	msgs, err := r.GetStoredMessages("u1", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Content != "hi" {
+		t.Fatalf("unexpected messages: %+v", msgs)
+	}
+}
+
+func TestConversationRepo_GetStoredMessages_InvalidJSON(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	rows := sqlmock.NewRows([]string{"messages", "updated_at"}).AddRow("not json", timeutil.Now())
+	mock.ExpectQuery("SELECT messages, updated_at FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnRows(rows)
+	_, err := r.GetStoredMessages("u1", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_GetStoredMessages_ScanError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	rows := sqlmock.NewRows([]string{"messages", "updated_at"}).AddRow(123, timeutil.Now())
+	mock.ExpectQuery("SELECT messages, updated_at FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnRows(rows)
+	_, err := r.GetStoredMessages("u1", 1)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_AppendMessages_DecodeError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{"messages", "updated_at"}).AddRow("not json", timeutil.Now())
+	mock.ExpectQuery("SELECT messages, updated_at FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnRows(rows)
+	mock.ExpectRollback()
+
+	if err := r.AppendMessages("u1", 1, openai.ChatMessage{Role: "user", Content: "x"}); err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestConversationRepo_CleanupExpiredMessages_CountStaleError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := timeutil.Now()
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnError(sqlmock.ErrCancelled)
+	_, err := r.CleanupExpiredMessages(cutoff)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_CleanupExpiredMessages_DeleteStaleError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := timeutil.Now()
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnError(sqlmock.ErrCancelled)
+	_, err := r.CleanupExpiredMessages(cutoff)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_CleanupExpiredMessages_QueryActiveError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := timeutil.Now()
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnError(sqlmock.ErrCancelled)
+	_, err := r.CleanupExpiredMessages(cutoff)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_CleanupExpiredMessages_RowsErr(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := timeutil.Now()
+	rows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+		AddRow("u1", int64(1), "[]", cutoff).
+		CloseError(sqlmock.ErrCancelled)
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(rows)
+	_, err := r.CleanupExpiredMessages(cutoff)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_CleanupExpiredMessages_DecodeError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := timeutil.Now()
+	activeRows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+		AddRow("u1", int64(1), "not json", cutoff)
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(activeRows)
+	_, err := r.CleanupExpiredMessages(cutoff)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConversationRepo_CleanupExpiredMessages_NoPruning(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := time.Date(2026, 7, 19, 12, 0, 0, 0, timeutil.BeijingLocation())
+	raw := `[{"role":"user","content":"fresh","created_at":"2026-07-19T12:00:01+08:00"}]`
+	activeRows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+		AddRow("u1", int64(1), raw, cutoff)
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(activeRows)
+
+	removed, err := r.CleanupExpiredMessages(cutoff)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("expected 0 removed, got %d", removed)
+	}
+}
+
+func TestConversationRepo_CleanupExpiredMessages_UpdateError(t *testing.T) {
+	r, mock := newConversationRepoMock(t)
+	cutoff := time.Date(2026, 7, 19, 12, 0, 0, 0, timeutil.BeijingLocation())
+	raw := `[{"role":"user","content":"old","created_at":"2026-07-19T11:59:59+08:00"}]`
+	activeRows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+		AddRow("u1", int64(1), raw, cutoff)
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(activeRows)
+	mock.ExpectExec("UPDATE agent_conversations").WithArgs(stringArg{}, beijingTimeArg{}, "u1", int64(1)).WillReturnError(sqlmock.ErrCancelled)
+
+	_, err := r.CleanupExpiredMessages(cutoff)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDecodeStoredMessages_LegacyFallback(t *testing.T) {
+	stored, err := decodeStoredMessages([]byte(`[{"role":"assistant","content":"legacy"}]`), timeutil.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stored) != 1 || stored[0].Role != "assistant" {
+		t.Fatalf("unexpected stored: %+v", stored)
+	}
+}
+
+func TestDecodeStoredMessages_InvalidJSON(t *testing.T) {
+	_, err := decodeStoredMessages([]byte("not json"), timeutil.Now())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestStoredMessagesHavePayload_Empty(t *testing.T) {
+	if !storedMessagesHavePayload(nil) {
+		t.Error("expected true for nil")
+	}
+}
+
+func TestStoredMessagesHavePayload_NoPayload(t *testing.T) {
+	raw := `[{"role":"","content":"","created_at":"2026-07-19T12:00:00+08:00"}]`
+	var stored []StoredChatMessage
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if storedMessagesHavePayload(stored) {
+		t.Error("expected false for empty payload messages")
 	}
 }

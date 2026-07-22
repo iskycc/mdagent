@@ -2,10 +2,10 @@ package timeutil
 
 import "time"
 
-var beijingLocation = loadBeijingLocation()
+var beijingLocation = loadLocation("Asia/Shanghai")
 
-func loadBeijingLocation() *time.Location {
-	loc, err := time.LoadLocation("Asia/Shanghai")
+func loadLocation(name string) *time.Location {
+	loc, err := time.LoadLocation(name)
 	if err == nil {
 		return loc
 	}

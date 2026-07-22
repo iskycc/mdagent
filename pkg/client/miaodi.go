@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -12,6 +13,17 @@ import (
 
 	"miaodi-agent/internal/metrics"
 )
+
+// multipartWriter abstracts *multipart.Writer so tests can inject failures.
+type multipartWriter interface {
+	WriteField(fieldname, value string) error
+	CreateFormFile(fieldname, filename string) (io.Writer, error)
+	Close() error
+	FormDataContentType() string
+}
+
+// newMultipartWriter is swappable in tests to exercise UpImage error paths.
+var newMultipartWriter = func(w io.Writer) multipartWriter { return multipart.NewWriter(w) }
 
 // MiaodiClient 喵滴 API 客户端
 type MiaodiClient struct {
@@ -102,7 +114,7 @@ func (m *MiaodiClient) UpImage(token, filePath string) (map[string]interface{}, 
 	}
 
 	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
+	writer := newMultipartWriter(body)
 	_ = writer.WriteField("token", token)
 
 	part, err := writer.CreateFormFile("image", fmt.Sprintf("%d.jpg", time.Now().Unix()))

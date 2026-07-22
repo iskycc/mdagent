@@ -195,3 +195,33 @@ func TestUserRepo_GetOrCreate_InsertError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestUserRepo_EnsureTable_CreateError(t *testing.T) {
+	r, mock := newUserRepoMock(t)
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnError(sqlmock.ErrCancelled)
+	if err := r.EnsureTable(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestUserRepo_EnsureTable_EmailColumnError(t *testing.T) {
+	r, mock := newUserRepoMock(t)
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS agent_users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnError(&mysql.MySQLError{Number: 1234, Message: "other error"})
+	if err := r.EnsureTable(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestUserRepo_EnsureEmailColumn_Error(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sqlmock failed: %v", err)
+	}
+	defer db.Close()
+	r := NewUserRepo(db)
+	mock.ExpectExec("ALTER TABLE agent_users ADD COLUMN email").WillReturnError(&mysql.MySQLError{Number: 1234, Message: "other error"})
+	if err := r.ensureEmailColumn(); err == nil {
+		t.Fatal("expected error")
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
+	"miaodi-agent/internal/timeutil"
 	"miaodi-agent/pkg/openai"
 )
 
@@ -420,4 +421,80 @@ func TestAgent_ProcessMessage_DeepSeekV4_DisablesThinking(t *testing.T) {
 	if llm.lastReq.Thinking.Type != "disabled" {
 		t.Errorf("expected thinking disabled, got %q", llm.lastReq.Thinking.Type)
 	}
+}
+
+func TestNewAgentWithOptions_OutputTokenClamp(t *testing.T) {
+	llm := &fakeLLM{}
+	agent := NewAgentWithOptions(
+		llm,
+		"model",
+		&fakeUserStore{},
+		&fakeConversationStore{},
+		&fakeToolRunner{},
+		AgentOptions{ModelMaxTokens: 100, MaxOutputTokens: 200},
+		cache.NopCache{},
+		nopPersistQueue{},
+	)
+	if agent.maxOutputTokens >= agent.modelMaxTokens {
+		t.Fatalf("expected output tokens clamped below model tokens, got %d/%d", agent.maxOutputTokens, agent.modelMaxTokens)
+	}
+}
+
+func TestSystemPromptCache_HitMissExpired(t *testing.T) {
+	c := newSystemPromptCache(time.Millisecond)
+	user := &model.User{Status: userStatusBound, Book: "b", Chara: "c", Title: "t"}
+	if _, ok := c.get(user); ok {
+		t.Fatal("expected miss on empty cache")
+	}
+	c.set(user, "prompt1")
+	if got, ok := c.get(user); !ok || got != "prompt1" {
+		t.Fatalf("expected hit, got %q %v", got, ok)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if _, ok := c.get(user); ok {
+		t.Fatal("expected expired entry to miss")
+	}
+}
+
+func TestBuildSystemPrompt_WaitingEmailCode(t *testing.T) {
+	prompt := buildSystemPrompt(&model.User{Status: userStatusWaitingEmailCode, Book: "b", Chara: "c", Title: "null"})
+	if !strings.Contains(prompt, "等待邮箱验证码") {
+		t.Fatalf("expected waiting email code status, got %s", prompt)
+	}
+	if !strings.Contains(prompt, timeutil.Date()) {
+		t.Fatalf("expected date fallback title, got %s", prompt)
+	}
+}
+
+func TestAgent_ProcessMessage_CacheUserHit(t *testing.T) {
+	fakeCache := &fakeCache{
+		user: &model.User{ChannelUserID: "u1", Status: userStatusBound, Book: "b", Chara: "c"},
+	}
+	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("ok")}}
+	agent := NewAgentWithOptions(
+		llm,
+		"model",
+		&fakeUserStore{err: errors.New("should not call")},
+		&fakeConversationStore{},
+		&fakeToolRunner{},
+		AgentOptions{},
+		fakeCache,
+		nopPersistQueue{},
+	)
+	reply := agent.ProcessMessage(context.Background(), newTestPayload())
+	if reply != "ok" {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+}
+
+type fakeCache struct {
+	cache.NopCache
+	user *model.User
+}
+
+func (f *fakeCache) GetUser(ctx context.Context, channelUserID string) (*model.User, error) {
+	if f.user != nil {
+		return f.user, nil
+	}
+	return nil, errors.New("not found")
 }

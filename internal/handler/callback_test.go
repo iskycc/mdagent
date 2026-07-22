@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -113,5 +114,62 @@ func TestHandleHealth(t *testing.T) {
 
 	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
 		t.Fatalf("unexpected health response: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) {
+	return 0, errors.New("read failed")
+}
+
+func TestHandleCallback_ReadBodyError(t *testing.T) {
+	agent := &fakeAgent{reply: "should not use"}
+	h := NewCallbackHandler(agent)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "/callback")
+
+	req := httptest.NewRequest(http.MethodPost, "/callback", errReader{})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+type failingResponseWriter struct {
+	headers http.Header
+	status  int
+}
+
+func (f *failingResponseWriter) Header() http.Header {
+	if f.headers == nil {
+		f.headers = make(http.Header)
+	}
+	return f.headers
+}
+
+func (f *failingResponseWriter) WriteHeader(status int) {
+	f.status = status
+}
+
+func (f *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestWriteJSON_Error(t *testing.T) {
+	resp := model.NewSuccessResponse("hello")
+	w := &failingResponseWriter{}
+	writeJSON(w, http.StatusOK, resp)
+	if w.status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, w.status)
+	}
+}
+
+func TestMustJSON_Error(t *testing.T) {
+	result := mustJSON(make(chan int))
+	if !strings.Contains(result, "marshal failed") {
+		t.Fatalf("expected marshal failed message, got %s", result)
 	}
 }
