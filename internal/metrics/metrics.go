@@ -101,6 +101,7 @@ type Recorder struct {
 	metrics map[string]*metric
 
 	store         Store
+	storeMu       sync.RWMutex
 	snapshotCache atomic.Value
 	pendingMu     sync.Mutex
 	pending       []Sample
@@ -110,6 +111,7 @@ type Recorder struct {
 	stopOnce      sync.Once
 	flushMu       sync.Mutex
 	running       atomic.Bool
+	wg            sync.WaitGroup
 }
 
 // NewRecorder 创建一个新的 Recorder。
@@ -125,8 +127,20 @@ func NewRecorder() *Recorder {
 // NewRecorderWithStore 创建一个有持久化能力的 Recorder。
 func NewRecorderWithStore(store Store) *Recorder {
 	r := NewRecorder()
-	r.store = store
+	r.setStore(store)
 	return r
+}
+
+func (r *Recorder) setStore(s Store) {
+	r.storeMu.Lock()
+	r.store = s
+	r.storeMu.Unlock()
+}
+
+func (r *Recorder) getStore() Store {
+	r.storeMu.RLock()
+	defer r.storeMu.RUnlock()
+	return r.store
 }
 
 func (r *Recorder) get(name string) *metric {
@@ -166,10 +180,11 @@ func (r *Recorder) Record(name string, d time.Duration, success bool) {
 
 // Init 从 Store 加载最近的采样并恢复到内存统计中。
 func (r *Recorder) Init() error {
-	if r.store == nil {
+	store := r.getStore()
+	if store == nil {
 		return nil
 	}
-	samples, err := r.store.LoadRecent(maxSamples)
+	samples, err := store.LoadRecent(maxSamples)
 	if err != nil {
 		return fmt.Errorf("load metric samples failed: %w", err)
 	}
@@ -185,13 +200,16 @@ func (r *Recorder) Init() error {
 // Run 启动后台 goroutine，按 flushInterval 周期刷新 pending 样本到 Store。
 // 多次调用 Run() 只会启动一个刷新 goroutine；当 store 为 nil 时不执行任何操作。
 func (r *Recorder) Run(ctx context.Context) {
-	if r.store == nil {
+	store := r.getStore()
+	if store == nil {
 		return
 	}
 	if !r.running.CompareAndSwap(false, true) {
 		return
 	}
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		defer r.running.Store(false)
 		ticker := time.NewTicker(r.flushInterval)
 		defer ticker.Stop()
@@ -210,25 +228,13 @@ func (r *Recorder) Run(ctx context.Context) {
 	}()
 }
 
-// FlushContext 与 Flush 相同，但可以通过 ctx 取消等待。
-// 如果 ctx 在 flush 完成前取消，返回 ctx.Err()；实际的 Store.Save 仍在后台运行。
-func (r *Recorder) FlushContext(ctx context.Context) error {
-	done := make(chan error, 1)
-	go func() { done <- r.Flush() }()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-done:
-		return err
-	}
-}
-
 // Flush 将 pending 中的样本持久化到 Store；失败时将样本重新放回 pending。
 func (r *Recorder) Flush() error {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
 
-	if r.store == nil {
+	store := r.getStore()
+	if store == nil {
 		return nil
 	}
 
@@ -242,7 +248,7 @@ func (r *Recorder) Flush() error {
 	r.pending = r.pending[:0]
 	r.pendingMu.Unlock()
 
-	if err := r.store.Save(toSave); err != nil {
+	if err := store.Save(toSave); err != nil {
 		r.pendingMu.Lock()
 		// 失败样本放回队列头部；若超过两倍 maxPending，则丢弃最老的样本，
 		// 保留最新的样本。
@@ -256,13 +262,16 @@ func (r *Recorder) Flush() error {
 	return nil
 }
 
-// Stop 通知后台刷新 goroutine 退出；重复调用不会 panic。
+// Stop 通知后台刷新 goroutine 退出并等待其结束；重复调用不会 panic。
 func (r *Recorder) Stop() {
 	r.stopOnce.Do(func() {
 		if r.stopCh != nil {
 			close(r.stopCh)
 		}
 	})
+	r.wg.Wait()
+	r.stopOnce = sync.Once{}
+	r.stopCh = make(chan struct{})
 }
 
 // Start 开始一个计时 Span，返回后调用者需调用 Finish。
@@ -357,7 +366,7 @@ func SetSnapshotCache(c SnapshotCache) {
 
 // Init 使用指定的 Store 初始化默认 Recorder 并恢复历史样本。
 func Init(store Store) error {
-	global.store = store
+	global.setStore(store)
 	return global.Init()
 }
 
@@ -366,14 +375,14 @@ func Run(ctx context.Context) {
 	global.Run(ctx)
 }
 
+// Stop 停止默认 Recorder 的后台刷新循环并等待其退出。
+func Stop() {
+	global.Stop()
+}
+
 // Flush 立即将默认 Recorder 的 pending 样本刷新到 Store。
 func Flush() error {
 	return global.Flush()
-}
-
-// FlushContext 立即刷新默认 Recorder，支持通过 ctx 取消等待。
-func FlushContext(ctx context.Context) error {
-	return global.FlushContext(ctx)
 }
 
 func percentile(sorted []float64, p float64) float64 {

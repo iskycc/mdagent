@@ -100,25 +100,38 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 		}
 	}()
 
+	var listenErr error
 	select {
 	case <-ctx.Done():
 	case err := <-serverErr:
-		return fmt.Errorf("listen failed: %w", err)
+		listenErr = err
 	}
 	log.Println("shutting down server...")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := metrics.FlushContext(shutdownCtx); err != nil {
-		log.Printf("flush metrics failed: %v", err)
+
+	stopDone := make(chan struct{})
+	go func() {
+		metrics.Stop()
+		close(stopDone)
+	}()
+	select {
+	case <-stopDone:
+	case <-shutdownCtx.Done():
+		log.Printf("metrics stop timed out")
 	}
+
 	if err := persistQueue.Flush(shutdownCtx); err != nil {
 		log.Printf("flush persist queue failed: %v", err)
 	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server forced to shutdown: %w", err)
+		log.Printf("server forced to shutdown: %v", err)
 	}
 	log.Println("server exited")
+	if listenErr != nil {
+		return fmt.Errorf("listen failed: %w", listenErr)
+	}
 	return nil
 }
 
