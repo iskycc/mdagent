@@ -101,7 +101,7 @@ type Recorder struct {
 	metrics map[string]*metric
 
 	store         Store
-	snapshotCache SnapshotCache
+	snapshotCache atomic.Value
 	pendingMu     sync.Mutex
 	pending       []Sample
 	flushInterval time.Duration // 仅在构造函数中设置，构造后不可变
@@ -259,15 +259,28 @@ func (r *Recorder) Start(name string) *Span {
 
 // SetSnapshotCache 设置用于缓存指标快照的 Cache。
 func (r *Recorder) SetSnapshotCache(c SnapshotCache) {
-	r.snapshotCache = c
+	if c == nil {
+		return
+	}
+	r.snapshotCache.Store(c)
+}
+
+// loadSnapshotCache 从 atomic.Value 中读取当前 SnapshotCache。
+func (r *Recorder) loadSnapshotCache() SnapshotCache {
+	v := r.snapshotCache.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(SnapshotCache)
 }
 
 // Snapshot 返回当前所有指标快照。
-// 如果配置了 SnapshotCache 且缓存命中，则直接返回缓存数据；
+// 如果配置了 SnapshotCache 且缓存命中（且非空），则直接返回缓存数据；
 // 否则计算内存指标并尝试将结果写回缓存（错误被忽略，由调用方降级）。
+// 空缓存被视为未命中，防止指标产生后仍返回过期的空快照。
 func (r *Recorder) Snapshot() []MetricSnapshot {
-	if r.snapshotCache != nil {
-		cached, err := r.snapshotCache.GetMetricsSnapshot(context.Background())
+	if c := r.loadSnapshotCache(); c != nil {
+		cached, err := c.GetMetricsSnapshot(context.Background())
 		if err == nil && len(cached) > 0 {
 			return cached
 		}
@@ -285,8 +298,8 @@ func (r *Recorder) Snapshot() []MetricSnapshot {
 		result = append(result, r.get(name).snapshot(name))
 	}
 
-	if r.snapshotCache != nil {
-		_ = r.snapshotCache.SetMetricsSnapshot(context.Background(), result)
+	if c := r.loadSnapshotCache(); c != nil {
+		_ = c.SetMetricsSnapshot(context.Background(), result)
 	}
 	return result
 }

@@ -393,6 +393,25 @@ func TestRecorder_Snapshot_MissWritesCache(t *testing.T) {
 	}
 }
 
+func TestRecorder_Snapshot_GetErrorFallsBack(t *testing.T) {
+	r := NewRecorder()
+	r.Record("api", 100*time.Millisecond, true)
+
+	cache := &fakeSnapshotCache{getErr: errors.New("cache down")}
+	r.SetSnapshotCache(cache)
+
+	snapshots := r.Snapshot()
+	if len(snapshots) != 1 || snapshots[0].Name != "api" {
+		t.Fatalf("expected in-memory snapshot, got %+v", snapshots)
+	}
+
+	cache.mu.Lock()
+	if !cache.setCalled {
+		t.Errorf("expected SetMetricsSnapshot to be called on fallback")
+	}
+	cache.mu.Unlock()
+}
+
 func TestSetSnapshotCache_Global(t *testing.T) {
 	origGlobal := global
 	defer func() { global = origGlobal }()
