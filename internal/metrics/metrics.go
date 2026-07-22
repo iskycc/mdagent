@@ -112,6 +112,7 @@ type Recorder struct {
 	flushMu       sync.Mutex
 	running       atomic.Bool
 	wg            sync.WaitGroup
+	lifecycleMu   sync.Mutex
 }
 
 // NewRecorder 创建一个新的 Recorder。
@@ -200,17 +201,24 @@ func (r *Recorder) Init() error {
 // Run 启动后台 goroutine，按 flushInterval 周期刷新 pending 样本到 Store。
 // 多次调用 Run() 只会启动一个刷新 goroutine；当 store 为 nil 时不执行任何操作。
 func (r *Recorder) Run(ctx context.Context) {
-	r.wg.Add(1)
+	r.lifecycleMu.Lock()
+	defer r.lifecycleMu.Unlock()
+
 	if !r.running.CompareAndSwap(false, true) {
-		r.wg.Done()
 		return
 	}
 	store := r.getStore()
 	if store == nil {
 		r.running.Store(false)
-		r.wg.Done()
 		return
 	}
+
+	// 每次启动新 goroutine 时重置 stop channel，允许 Stop/Run 在测试中被重复使用。
+	r.stopOnce = sync.Once{}
+	r.stopCh = make(chan struct{})
+	stopCh := r.stopCh
+
+	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
 		defer r.running.Store(false)
@@ -221,7 +229,7 @@ func (r *Recorder) Run(ctx context.Context) {
 			case <-ctx.Done():
 				r.Flush()
 				return
-			case <-r.stopCh:
+			case <-stopCh:
 				r.Flush()
 				return
 			case <-ticker.C:
@@ -267,14 +275,15 @@ func (r *Recorder) Flush() error {
 
 // Stop 通知后台刷新 goroutine 退出并等待其结束；重复调用不会 panic。
 func (r *Recorder) Stop() {
+	r.lifecycleMu.Lock()
+	defer r.lifecycleMu.Unlock()
+
 	r.stopOnce.Do(func() {
 		if r.stopCh != nil {
 			close(r.stopCh)
 		}
 	})
 	r.wg.Wait()
-	r.stopOnce = sync.Once{}
-	r.stopCh = make(chan struct{})
 }
 
 // Start 开始一个计时 Span，返回后调用者需调用 Finish。
