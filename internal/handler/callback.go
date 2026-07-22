@@ -20,13 +20,14 @@ type MessageProcessor interface {
 
 // CallbackHandler 传送鸽回调处理器
 type CallbackHandler struct {
-	agent          MessageProcessor
-	callbackSecret string
+	agent             MessageProcessor
+	callbackSecret    string
+	callbackAuthEnabled bool
 }
 
 // NewCallbackHandler 创建处理器
-func NewCallbackHandler(agent MessageProcessor, callbackSecret string) *CallbackHandler {
-	return &CallbackHandler{agent: agent, callbackSecret: callbackSecret}
+func NewCallbackHandler(agent MessageProcessor, callbackSecret string, callbackAuthEnabled bool) *CallbackHandler {
+	return &CallbackHandler{agent: agent, callbackSecret: callbackSecret, callbackAuthEnabled: callbackAuthEnabled}
 }
 
 // RegisterRoutes 注册路由
@@ -57,11 +58,13 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 	}
 	debuglog.Printf("callback request body=%s", string(body))
 
-	if err := validateCallbackSignature(h.callbackSecret, r, body); err != nil {
-		debuglog.Printf("callback signature invalid elapsed=%s error=%v", time.Since(start), err)
-		metrics.Record("callback_handler", time.Since(start), false)
-		writeJSON(w, http.StatusUnauthorized, model.NewErrorResponse("请求签名验证失败"))
-		return
+	if h.callbackAuthEnabled {
+		if err := validateCallbackSignature(h.callbackSecret, r, body); err != nil {
+			debuglog.Printf("callback signature invalid elapsed=%s error=%v", time.Since(start), err)
+			metrics.Record("callback_handler", time.Since(start), false)
+			writeJSON(w, http.StatusUnauthorized, model.NewErrorResponse("请求签名验证失败"))
+			return
+		}
 	}
 
 	var payload model.CallbackPayload

@@ -23,6 +23,7 @@ services:
       OPENAI_DEBUG: "false"
       CALLBACK_PATH: /webhook
       CALLBACK_SECRET: ${CALLBACK_SECRET}
+      CALLBACK_AUTH_ENABLED: "false"
       STATS_TOKEN: ${STATS_TOKEN}
       REDIS_HOST: redis
       REDIS_PORT: 6379

@@ -92,7 +92,25 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestValidate_ProductionRequiresCallbackSecret(t *testing.T) {
+func TestValidate_CallbackAuthEnabledRequiresSecret(t *testing.T) {
+	cfg := &Config{
+		CallbackAuthEnabled: true,
+		OpenAIAPIKey:        "sk-test",
+		DBUser:              "root",
+		DBName:              "test",
+		ModelMaxTokens:      8192,
+		MaxOutputTokens:     1024,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error when callback auth enabled without secret")
+	}
+	cfg.CallbackSecret = "secret"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestValidate_ProductionWithoutCallbackAuth(t *testing.T) {
 	cfg := &Config{
 		Env:             "production",
 		OpenAIAPIKey:    "sk-test",
@@ -101,12 +119,8 @@ func TestValidate_ProductionRequiresCallbackSecret(t *testing.T) {
 		ModelMaxTokens:  8192,
 		MaxOutputTokens: 1024,
 	}
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected validation error for missing CALLBACK_SECRET in production")
-	}
-	cfg.CallbackSecret = "secret"
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("unexpected validation error: %v", err)
+		t.Fatalf("expected validation to pass when callback auth is disabled: %v", err)
 	}
 }
 

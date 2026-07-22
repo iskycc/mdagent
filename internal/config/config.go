@@ -22,9 +22,10 @@ type Config struct {
 	OpenAIModel     string
 	ModelMaxTokens  int
 	MaxOutputTokens int
-	CallbackPath    string
-	CallbackSecret  string
-	StatsToken      string
+	CallbackPath       string
+	CallbackSecret     string
+	CallbackAuthEnabled bool
+	StatsToken         string
 	RedisHost       string
 	RedisPort       string
 	RedisPassword   string
@@ -49,9 +50,10 @@ func Load() *Config {
 		OpenAIModel:     getEnv("OPENAI_MODEL", "deepseek-chat"),
 		ModelMaxTokens:  getEnvInt("OPENAI_MODEL_MAX_TOKENS", 8192),
 		MaxOutputTokens: getEnvInt("OPENAI_MAX_OUTPUT_TOKENS", 1024),
-		CallbackPath:    getEnv("CALLBACK_PATH", "/callback"),
-		CallbackSecret:  getEnv("CALLBACK_SECRET", ""),
-		StatsToken:      getEnv("STATS_TOKEN", ""),
+		CallbackPath:        getEnv("CALLBACK_PATH", "/callback"),
+		CallbackSecret:      getEnv("CALLBACK_SECRET", ""),
+		CallbackAuthEnabled: getEnvBool("CALLBACK_AUTH_ENABLED", false),
+		StatsToken:          getEnv("STATS_TOKEN", ""),
 		RedisHost:       getEnv("REDIS_HOST", "localhost"),
 		RedisPort:       getEnv("REDIS_PORT", "6379"),
 		RedisPassword:   getEnv("REDIS_PASSWORD", ""),
@@ -114,8 +116,8 @@ func (c *Config) Validate() error {
 	if c.MaxOutputTokens >= c.ModelMaxTokens {
 		return fmt.Errorf("OPENAI_MODEL_MAX_TOKENS must be less than OPENAI_MODEL_MAX_TOKENS")
 	}
-	if c.Env == "production" && c.CallbackSecret == "" {
-		return fmt.Errorf("CALLBACK_SECRET is required in production")
+	if c.CallbackAuthEnabled && c.CallbackSecret == "" {
+		return fmt.Errorf("CALLBACK_SECRET is required when callback auth is enabled")
 	}
 	return nil
 }

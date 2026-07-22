@@ -26,7 +26,7 @@ func (f *fakeAgent) ProcessMessage(ctx context.Context, payload *model.CallbackP
 func TestHandleCallback_UserMessage(t *testing.T) {
 	t.Setenv("APP_DEBUG", "true")
 	agent := &fakeAgent{reply: "收到，已保存"}
-	h := NewCallbackHandler(agent, "")
+	h := NewCallbackHandler(agent, "", false)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -55,7 +55,7 @@ func TestHandleCallback_UserMessage(t *testing.T) {
 
 func TestHandleCallback_UnknownEvent(t *testing.T) {
 	agent := &fakeAgent{reply: "should not use"}
-	h := NewCallbackHandler(agent, "")
+	h := NewCallbackHandler(agent, "", false)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -78,7 +78,7 @@ func TestHandleCallback_UnknownEvent(t *testing.T) {
 
 func TestHandleCallback_InvalidJSON(t *testing.T) {
 	agent := &fakeAgent{reply: "should not use"}
-	h := NewCallbackHandler(agent, "")
+	h := NewCallbackHandler(agent, "", false)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -93,7 +93,7 @@ func TestHandleCallback_InvalidJSON(t *testing.T) {
 
 func TestHandleCallback_MethodNotAllowed(t *testing.T) {
 	agent := &fakeAgent{}
-	h := NewCallbackHandler(agent, "")
+	h := NewCallbackHandler(agent, "", false)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -107,7 +107,7 @@ func TestHandleCallback_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleHealth(t *testing.T) {
-	h := NewCallbackHandler(nil, "")
+	h := NewCallbackHandler(nil, "", false)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -128,7 +128,7 @@ func (errReader) Read([]byte) (int, error) {
 
 func TestHandleCallback_ReadBodyError(t *testing.T) {
 	agent := &fakeAgent{reply: "should not use"}
-	h := NewCallbackHandler(agent, "")
+	h := NewCallbackHandler(agent, "", false)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -189,7 +189,7 @@ func signedCallbackRequest(t *testing.T, secret, body string) *http.Request {
 
 func TestHandleCallback_SignatureRequired(t *testing.T) {
 	agent := &fakeAgent{reply: "收到"}
-	h := NewCallbackHandler(agent, "my-secret")
+	h := NewCallbackHandler(agent, "my-secret", true)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -205,7 +205,7 @@ func TestHandleCallback_SignatureRequired(t *testing.T) {
 
 func TestHandleCallback_SignatureMismatch(t *testing.T) {
 	agent := &fakeAgent{reply: "收到"}
-	h := NewCallbackHandler(agent, "my-secret")
+	h := NewCallbackHandler(agent, "my-secret", true)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -223,7 +223,7 @@ func TestHandleCallback_SignatureMismatch(t *testing.T) {
 
 func TestHandleCallback_SignatureExpired(t *testing.T) {
 	agent := &fakeAgent{reply: "收到"}
-	h := NewCallbackHandler(agent, "my-secret")
+	h := NewCallbackHandler(agent, "my-secret", true)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -243,7 +243,7 @@ func TestHandleCallback_SignatureExpired(t *testing.T) {
 
 func TestHandleCallback_SignatureSuccess(t *testing.T) {
 	agent := &fakeAgent{reply: "收到"}
-	h := NewCallbackHandler(agent, "my-secret")
+	h := NewCallbackHandler(agent, "my-secret", true)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -266,7 +266,7 @@ func TestHandleCallback_SignatureSuccess(t *testing.T) {
 
 func TestHandleCallback_SignatureBodyTampered(t *testing.T) {
 	agent := &fakeAgent{reply: "收到"}
-	h := NewCallbackHandler(agent, "my-secret")
+	h := NewCallbackHandler(agent, "my-secret", true)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "/callback")
 
@@ -327,6 +327,22 @@ func TestValidateCallbackSignature_Success(t *testing.T) {
 	req.Header.Set(callbackSignatureHeader, sig)
 	if err := validateCallbackSignature("secret", req, body); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHandleCallback_AuthDisabledWithSecret(t *testing.T) {
+	agent := &fakeAgent{reply: "收到"}
+	h := NewCallbackHandler(agent, "my-secret", false)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "/callback")
+
+	body := `{"eventType":"user_message","bot":{"id":1,"name":"b"},"conversation":{"id":1},"user":{"userId":"u1","username":"*"},"message":{"id":1,"content":"hi","createTime":"1"}}`
+	req := httptest.NewRequest(http.MethodPost, "/callback", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when auth disabled, got %d", rec.Code)
 	}
 }
 
