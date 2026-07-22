@@ -31,6 +31,9 @@ services:
       REDIS_DB: 0
       REDIS_ENABLED: "true"
       MAX_CALLBACK_BODY_BYTES: "1048576"
+      MIAODI_API_BASE_URL: ${MIAODI_API_BASE_URL:-https://api.libv.cc/miaodi}
+      MIAODI_MAIL_API_URL: ${MIAODI_MAIL_API_URL:-https://api.miaodiapp.com/api/newmail.php}
+      MIAODI_PICTURE_API_URL: ${MIAODI_PICTURE_API_URL:-https://picture.miaodiapp.com/api/upload}
       TZ: Asia/Shanghai
     ports:
       - "8735:8735"

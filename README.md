@@ -32,6 +32,9 @@
 | `CALLBACK_SECRET` | 回调鉴权密钥；开启鉴权时必填 | - |
 | `STATS_TOKEN` | 统计看板访问 Token；未配置时不注册统计路由 | - |
 | `MAX_CALLBACK_BODY_BYTES` | 回调请求体最大字节数 | `1048576` |
+| `MIAODI_API_BASE_URL` | 喵滴 API 基础地址（Check/SendEmail/GetInfo/PutText） | `https://api.libv.cc/miaodi` |
+| `MIAODI_MAIL_API_URL` | 喵滴邮箱验证码换 Key 地址 | `https://api.miaodiapp.com/api/newmail.php` |
+| `MIAODI_PICTURE_API_URL` | 喵滴图片上传地址 | `https://picture.miaodiapp.com/api/upload` |
 | `REDIS_HOST` | Redis 主机 | `localhost` |
 | `REDIS_PORT` | Redis 端口 | `6379` |
 | `REDIS_PASSWORD` | Redis 密码 | - |
