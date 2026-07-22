@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -345,14 +346,30 @@ func TestSeedCache_SetMessagesError(t *testing.T) {
 }
 
 type fakeConversationCleaner struct {
+	mu      sync.Mutex
 	removed int
 	err     error
 	called  int
 }
 
 func (f *fakeConversationCleaner) CleanupExpiredMessages(cutoff time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.called++
 	return f.removed, f.err
+}
+
+func (f *fakeConversationCleaner) setResult(removed int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removed = removed
+	f.err = err
+}
+
+func (f *fakeConversationCleaner) calledCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
 }
 
 func TestStartConversationCleanup_CtxDone(t *testing.T) {
@@ -376,28 +393,43 @@ func TestStartConversationCleanup_ErrorAndRemoved(t *testing.T) {
 	startConversationCleanup(ctx, cleaner, 10*time.Millisecond)
 
 	time.Sleep(40 * time.Millisecond)
-	if cleaner.called == 0 {
+	if cleaner.calledCount() == 0 {
 		t.Fatal("expected cleanup called")
 	}
 
 	// Switch to success with removed count to cover removed>0 path.
-	cleaner.err = nil
-	cleaner.removed = 3
+	cleaner.setResult(3, nil)
 	time.Sleep(40 * time.Millisecond)
-	if cleaner.called < 2 {
-		t.Fatalf("expected cleanup called multiple times, got %d", cleaner.called)
+	if cleaner.calledCount() < 2 {
+		t.Fatalf("expected cleanup called multiple times, got %d", cleaner.calledCount())
 	}
 }
 
 type fakeCallLogCleaner struct {
+	mu      sync.Mutex
 	deleted int64
 	err     error
 	called  int
 }
 
 func (f *fakeCallLogCleaner) CleanupOlderThan(days int) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.called++
 	return f.deleted, f.err
+}
+
+func (f *fakeCallLogCleaner) setResult(deleted int64, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = deleted
+	f.err = err
+}
+
+func (f *fakeCallLogCleaner) calledCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
 }
 
 func TestStartCallLogCleanup_CtxDone(t *testing.T) {
@@ -421,15 +453,14 @@ func TestStartCallLogCleanup_ErrorAndDeleted(t *testing.T) {
 	startCallLogCleanup(ctx, cleaner, 10*time.Millisecond)
 
 	time.Sleep(40 * time.Millisecond)
-	if cleaner.called == 0 {
+	if cleaner.calledCount() == 0 {
 		t.Fatal("expected cleanup called")
 	}
 
-	cleaner.err = nil
-	cleaner.deleted = 5
+	cleaner.setResult(5, nil)
 	time.Sleep(40 * time.Millisecond)
-	if cleaner.called < 2 {
-		t.Fatalf("expected cleanup called multiple times, got %d", cleaner.called)
+	if cleaner.calledCount() < 2 {
+		t.Fatalf("expected cleanup called multiple times, got %d", cleaner.calledCount())
 	}
 }
 
