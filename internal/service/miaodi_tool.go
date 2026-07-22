@@ -404,6 +404,9 @@ func (e *ToolExecutor) sendMiaodiEmailCode(user *model.User, channelUserID, argu
 	}
 	user.Email = args.Email
 	user.Status = userStatusWaitingEmailCode
+	if err := e.cache.SetUser(context.Background(), user); err != nil {
+		debuglog.Printf("send email cache set failed user=%s error=%v", channelUserID, err)
+	}
 	e.recordCall(channelUserID, "", "send_email")
 	return "邮件已发送，请检查收件箱并回复收到的验证码"
 }
@@ -771,7 +774,11 @@ func (e *ToolExecutor) recordCall(channelUserID, apikey, action string) {
 		_ = e.callLogRepo.Record(channelUserID, apikey, "miaodi", action)
 		return
 	}
-	e.persistQueue.EnqueueLog(ctx, channelUserID, apikey, "miaodi", action)
+	if !e.persistQueue.EnqueueLog(ctx, channelUserID, apikey, "miaodi", action) {
+		if err := e.callLogRepo.Record(channelUserID, apikey, "miaodi", action); err != nil {
+			debuglog.Printf("enqueue log fallback failed user=%s action=%s error=%v", channelUserID, action, err)
+		}
+	}
 }
 
 func getNowTitle(title string) string {

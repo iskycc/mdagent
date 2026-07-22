@@ -30,6 +30,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       REDIS_DB: 0
       REDIS_ENABLED: "true"
+      MAX_CALLBACK_BODY_BYTES: "1048576"
       TZ: Asia/Shanghai
     ports:
       - "8735:8735"

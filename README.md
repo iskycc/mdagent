@@ -28,6 +28,15 @@
 | `OPENAI_MAX_OUTPUT_TOKENS` | 单次模型最大输出 token 数 | `1024` |
 | `OPENAI_DEBUG` | 打印模型请求体和错误响应，排查模型兼容问题时使用 | `false` |
 | `CALLBACK_PATH` | 传送鸽回调路径 | `/callback` |
+| `CALLBACK_AUTH_ENABLED` | 是否开启回调 HMAC-SHA256 鉴权 | `false` |
+| `CALLBACK_SECRET` | 回调鉴权密钥；开启鉴权时必填 | - |
+| `STATS_TOKEN` | 统计看板访问 Token；未配置时不注册统计路由 | - |
+| `MAX_CALLBACK_BODY_BYTES` | 回调请求体最大字节数 | `1048576` |
+| `REDIS_HOST` | Redis 主机 | `localhost` |
+| `REDIS_PORT` | Redis 端口 | `6379` |
+| `REDIS_PASSWORD` | Redis 密码 | - |
+| `REDIS_DB` | Redis 数据库 | `0` |
+| `REDIS_ENABLED` | 是否启用 Redis 缓存 | `true` |
 
 ## 启动
 
@@ -60,7 +69,7 @@ docker compose up -d --remove-orphans
 HOST_PORT=18080 docker compose up -d --remove-orphans
 ```
 
-当前服务没有 Redis 依赖：用户状态、会话历史、图片待上传队列和统计日志都写入 MySQL。之前 Compose 里的 Redis 是历史遗留配置，代码没有读写 Redis，所以已移除，避免启动无效组件。
+Redis 缓存默认启用，用于加速用户状态、会话历史和最近调用日志的读取；Redis 不可用时应用会自动降级到 MySQL。若不需要 Redis，可设置 `REDIS_ENABLED=false`，此时 Compose 中也可以移除 `redis` 服务。
 
 服务启动时会自动建表：
 
@@ -78,6 +87,15 @@ HOST_PORT=18080 docker compose up -d --remove-orphans
 1. 在 传送鸽 开发者后台注册一个 bot，把 `callbackUrl` 填为 `http://<你的域名>/callback`。
 2. 用户订阅 bot 后发送消息，传送鸽会把消息 POST 到本服务。
 3. 本服务在 10 秒内返回 `{"success": true, "reply": {"content": "..."}}`。
+
+### 回调鉴权
+
+`CALLBACK_AUTH_ENABLED` 默认 `false`，保持与现有对端服务兼容。开启后（`true`），回调请求必须携带：
+
+- `X-MD-Timestamp`: Unix 秒时间戳
+- `X-MD-Signature`: `HMAC-SHA256(CALLBACK_SECRET, timestamp + "." + rawBody)` 的十六进制
+
+签名时间戳窗口为 ±5 分钟。
 
 ## 统计看板
 
@@ -99,6 +117,13 @@ http://localhost:8080/stats
 ```text
 GET /api/stats
 ```
+
+访问统计页面或 JSON 接口需要以下任一鉴权方式：
+
+- `Authorization: Bearer <STATS_TOKEN>`
+- `GET /stats?token=<STATS_TOKEN>`
+
+未配置 `STATS_TOKEN` 时，服务启动后不会注册 `/stats` 和 `/api/stats` 路由。
 
 ## 支持的模型能力（tools）
 

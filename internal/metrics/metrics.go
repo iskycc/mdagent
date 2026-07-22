@@ -22,6 +22,8 @@ type MetricSnapshot struct {
 	P99Ms       float64 `json:"p99_ms"`
 }
 
+const maxSamples = 10000
+
 // metric 是内部聚合结构。
 type metric struct {
 	mu       sync.Mutex
@@ -37,7 +39,13 @@ func (m *metric) record(d time.Duration, success bool) {
 	if success {
 		m.success++
 	}
-	m.duration = append(m.duration, float64(d.Nanoseconds())/1e6)
+	ms := float64(d.Nanoseconds()) / 1e6
+	if len(m.duration) >= maxSamples {
+		// 保留最近 maxSamples 条，丢弃最老的样本
+		m.duration = append(m.duration[1:], ms)
+	} else {
+		m.duration = append(m.duration, ms)
+	}
 }
 
 func (m *metric) snapshot(name string) MetricSnapshot {

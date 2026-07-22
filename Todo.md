@@ -429,8 +429,8 @@ P3。
 ## 推荐执行顺序
 
 1. P0：回调鉴权、统计鉴权、关闭敏感 debug、Key 返回脱敏。✅
-2. P1：修 Redis 用户缓存、Webhook 幂等、异步持久化补偿、文档与 Compose 对齐、Key 存储治理。
-3. P2：请求体大小限制、metrics 有界化。
+2. P1：修 Redis 用户缓存、Webhook 幂等、异步持久化补偿、文档与 Compose 对齐、Key 存储治理。✅
+3. P2：请求体大小限制、metrics 有界化。✅
 4. P3：喵滴 endpoint 配置化、数据库迁移体系。
 
 每个任务完成后至少运行：

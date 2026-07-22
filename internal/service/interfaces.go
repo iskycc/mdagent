@@ -34,8 +34,8 @@ type ToolRunner interface {
 
 // PersistQueue 是异步持久化队列接口。
 type PersistQueue interface {
-	EnqueueConv(ctx context.Context, channelUserID string, conversationID int64, msgs []repository.StoredChatMessage)
-	EnqueueLog(ctx context.Context, channelUserID, apikey, channel, action string)
+	EnqueueConv(ctx context.Context, channelUserID string, conversationID int64, msgs []repository.StoredChatMessage) bool
+	EnqueueLog(ctx context.Context, channelUserID, apikey, channel, action string) bool
 	Run(ctx context.Context)
 	Flush(ctx context.Context) error
 }

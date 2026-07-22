@@ -39,13 +39,15 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	pendingRepo := repository.NewPendingImageRepo(db)
 	callLogRepo := repository.NewCallLogRepo(db)
 	llmCallLogRepo := repository.NewLLMCallLogRepo(db)
+	deadLetterRepo := repository.NewDeadLetterRepo(db)
+	processedMsgRepo := repository.NewProcessedMessageRepo(db)
 	startConversationCleanup(ctx, convRepo, time.Hour)
 	startCallLogCleanup(ctx, callLogRepo, time.Hour)
 	startLLMCallLogCleanup(ctx, llmCallLogRepo, time.Hour)
 
 	redisAddr := cfg.RedisHost + ":" + cfg.RedisPort
 	redisCache := cache.NewRedisCache(redisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisEnabled)
-	persistQueue := persist.NewPersistQueue(convRepo, callLogRepo, 1024)
+	persistQueue := persist.NewPersistQueue(convRepo, callLogRepo, deadLetterRepo, 1024)
 	persistQueue.Run(ctx)
 
 	if err := seedCache(ctx, redisCache, convRepo, userRepo); err != nil {
@@ -55,10 +57,11 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	toolExec := service.NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, callLogRepo, redisCache, persistQueue)
 	toolExec.SetModel(cfg.OpenAIModel)
 	agent := service.NewAgentWithLogger(llm, cfg.OpenAIModel, userRepo, convRepo, toolExec, service.AgentOptions{
-		ModelMaxTokens:  cfg.ModelMaxTokens,
-		MaxOutputTokens: cfg.MaxOutputTokens,
+		ModelMaxTokens:       cfg.ModelMaxTokens,
+		MaxOutputTokens:      cfg.MaxOutputTokens,
+		ProcessedMessageRepo: processedMsgRepo,
 	}, redisCache, persistQueue, llmCallLogRepo)
-	callbackHandler := handler.NewCallbackHandler(agent, cfg.CallbackSecret, cfg.CallbackAuthEnabled)
+	callbackHandler := handler.NewCallbackHandler(agent, cfg.CallbackSecret, cfg.CallbackAuthEnabled, cfg.MaxCallbackBodyBytes)
 
 	mux := http.NewServeMux()
 	callbackHandler.RegisterRoutes(mux, cfg.CallbackPath)
@@ -231,6 +234,8 @@ func initRepos(db *sql.DB) error {
 		{"pending_images", repository.NewPendingImageRepo(db).EnsureTable},
 		{"api_call_log", repository.NewCallLogRepo(db).EnsureTable},
 		{"llm_call_log", repository.NewLLMCallLogRepo(db).EnsureTable},
+		{"persist_dead_letters", repository.NewDeadLetterRepo(db).EnsureTable},
+		{"processed_messages", repository.NewProcessedMessageRepo(db).EnsureTable},
 	}
 	for _, r := range repos {
 		if err := r.fn(); err != nil {

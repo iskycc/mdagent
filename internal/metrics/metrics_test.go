@@ -57,6 +57,24 @@ func TestSpan_Finish(t *testing.T) {
 	}
 }
 
+func TestRecorder_MaxSamples(t *testing.T) {
+	r := NewRecorder()
+	for i := 0; i < maxSamples+100; i++ {
+		r.Record("test", time.Duration(i)*time.Millisecond, true)
+	}
+	snapshots := r.Snapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snapshots))
+	}
+	if snapshots[0].Count != int64(maxSamples+100) {
+		t.Errorf("expected count %d, got %d", maxSamples+100, snapshots[0].Count)
+	}
+	// 只保留最近 maxSamples 条；最早 100 条被丢弃，因此最小值应为 100
+	if snapshots[0].P50Ms < 100 {
+		t.Errorf("expected min >= 100 after eviction, got p50=%v", snapshots[0].P50Ms)
+	}
+}
+
 func TestPercentile(t *testing.T) {
 	sorted := []float64{10, 20, 30, 40, 50}
 	if percentile(sorted, 0.50) != 30 {

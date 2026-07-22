@@ -16,8 +16,10 @@ import (
 
 type nopPersistQueue struct{}
 
-func (nopPersistQueue) EnqueueConv(context.Context, string, int64, []repository.StoredChatMessage) {}
-func (nopPersistQueue) EnqueueLog(context.Context, string, string, string, string)             {}
+func (nopPersistQueue) EnqueueConv(context.Context, string, int64, []repository.StoredChatMessage) bool {
+	return true
+}
+func (nopPersistQueue) EnqueueLog(context.Context, string, string, string, string) bool { return true }
 func (nopPersistQueue) Run(context.Context)                                                    {}
 func (nopPersistQueue) Flush(context.Context) error                                            { return nil }
 
@@ -571,5 +573,61 @@ func TestAgent_ProcessMessage_RecordsLLMCall(t *testing.T) {
 	}
 	if logger.records[0].totalTokens != 15 {
 		t.Errorf("unexpected total tokens: %d", logger.records[0].totalTokens)
+	}
+}
+
+type fakeProcessedMessageRepo struct {
+	records     []string
+	shouldAllow bool
+	prevReply   string
+	err         error
+	markedDone  []string
+	markedFail  []string
+}
+
+func (f *fakeProcessedMessageRepo) StartProcessing(channelUserID string, conversationID, messageID int64, processingTimeout time.Duration) (bool, string, error) {
+	f.records = append(f.records, "start")
+	return f.shouldAllow, f.prevReply, f.err
+}
+
+func (f *fakeProcessedMessageRepo) MarkDone(channelUserID string, conversationID, messageID int64, reply string) error {
+	f.markedDone = append(f.markedDone, reply)
+	return nil
+}
+
+func (f *fakeProcessedMessageRepo) MarkFailed(channelUserID string, conversationID, messageID int64) error {
+	f.markedFail = append(f.markedFail, "fail")
+	return nil
+}
+
+func TestAgent_ProcessMessage_DuplicateReturnsSavedReply(t *testing.T) {
+	repo := &fakeProcessedMessageRepo{shouldAllow: false, prevReply: "already done"}
+	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("new reply")}}
+	agent := newTestAgentWithOptions(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, &fakeToolRunner{result: "ok"}, AgentOptions{
+		ProcessedMessageRepo: repo,
+	})
+
+	reply := agent.ProcessMessage(context.Background(), newTestPayload())
+	if reply != "already done" {
+		t.Fatalf("expected saved reply, got %q", reply)
+	}
+	if len(repo.markedDone) != 0 {
+		t.Fatal("expected no MarkDone for duplicate")
+	}
+}
+
+func TestAgent_ProcessMessage_NewMessageMarksDone(t *testing.T) {
+	repo := &fakeProcessedMessageRepo{shouldAllow: true}
+	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("ok")}}
+	agent := newTestAgentWithOptions(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, &fakeToolRunner{result: "tool ok"}, AgentOptions{
+		ProcessedMessageRepo: repo,
+	})
+
+	reply := agent.ProcessMessage(context.Background(), newTestPayload())
+	if reply != "ok" {
+		t.Fatalf("expected llm reply, got %q", reply)
+	}
+	if len(repo.markedDone) != 1 || repo.markedDone[0] != "ok" {
+		t.Fatalf("expected MarkDone with reply, got %v", repo.markedDone)
 	}
 }

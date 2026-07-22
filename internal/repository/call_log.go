@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -54,13 +56,19 @@ func (r *CallLogRepo) EnsureTable() error {
 	return err
 }
 
-// Record 记录一次 API 调用
+// Record 记录一次 API 调用。apikey 在落库前会被 SHA-256 哈希，避免明文保存完整 Key。
 func (r *CallLogRepo) Record(channelUserID, apikey, channel, action string) error {
 	_, err := r.db.Exec(`
 		INSERT INTO api_call_log(channel_user_id, apikey, channel, action, created_at)
 		VALUES (?, ?, ?, ?, ?)`,
-		channelUserID, apikey, channel, action, timeutil.Now())
+		channelUserID, hashAPIKey(apikey), channel, action, timeutil.Now())
 	return err
+}
+
+func hashAPIKey(apikey string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(apikey))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // TotalCalls 查询近 N 天总调用次数（N<=0 表示全部）

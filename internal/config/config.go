@@ -22,15 +22,16 @@ type Config struct {
 	OpenAIModel     string
 	ModelMaxTokens  int
 	MaxOutputTokens int
-	CallbackPath       string
-	CallbackSecret     string
-	CallbackAuthEnabled bool
-	StatsToken         string
-	RedisHost       string
-	RedisPort       string
-	RedisPassword   string
-	RedisDB         int
-	RedisEnabled    bool
+	CallbackPath          string
+	CallbackSecret        string
+	CallbackAuthEnabled   bool
+	StatsToken            string
+	MaxCallbackBodyBytes  int64
+	RedisHost             string
+	RedisPort             string
+	RedisPassword         string
+	RedisDB               int
+	RedisEnabled          bool
 }
 
 // Load 从环境变量加载配置
@@ -50,15 +51,16 @@ func Load() *Config {
 		OpenAIModel:     getEnv("OPENAI_MODEL", "deepseek-chat"),
 		ModelMaxTokens:  getEnvInt("OPENAI_MODEL_MAX_TOKENS", 8192),
 		MaxOutputTokens: getEnvInt("OPENAI_MAX_OUTPUT_TOKENS", 1024),
-		CallbackPath:        getEnv("CALLBACK_PATH", "/callback"),
-		CallbackSecret:      getEnv("CALLBACK_SECRET", ""),
-		CallbackAuthEnabled: getEnvBool("CALLBACK_AUTH_ENABLED", false),
-		StatsToken:          getEnv("STATS_TOKEN", ""),
-		RedisHost:       getEnv("REDIS_HOST", "localhost"),
-		RedisPort:       getEnv("REDIS_PORT", "6379"),
-		RedisPassword:   getEnv("REDIS_PASSWORD", ""),
-		RedisDB:         getEnvInt("REDIS_DB", 0),
-		RedisEnabled:    getEnvBool("REDIS_ENABLED", true),
+		CallbackPath:         getEnv("CALLBACK_PATH", "/callback"),
+		CallbackSecret:       getEnv("CALLBACK_SECRET", ""),
+		CallbackAuthEnabled:  getEnvBool("CALLBACK_AUTH_ENABLED", false),
+		StatsToken:           getEnv("STATS_TOKEN", ""),
+		MaxCallbackBodyBytes: getEnvInt64("MAX_CALLBACK_BODY_BYTES", 1024*1024),
+		RedisHost:            getEnv("REDIS_HOST", "localhost"),
+		RedisPort:            getEnv("REDIS_PORT", "6379"),
+		RedisPassword:        getEnv("REDIS_PASSWORD", ""),
+		RedisDB:              getEnvInt("REDIS_DB", 0),
+		RedisEnabled:         getEnvBool("REDIS_ENABLED", true),
 	}
 }
 
@@ -81,6 +83,18 @@ func getEnvInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return defaultVal
+	}
+	return n
+}
+
+func getEnvInt64(key string, defaultVal int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return defaultVal
 	}

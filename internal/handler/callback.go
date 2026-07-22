@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -23,11 +24,12 @@ type CallbackHandler struct {
 	agent             MessageProcessor
 	callbackSecret    string
 	callbackAuthEnabled bool
+	maxBodyBytes      int64
 }
 
 // NewCallbackHandler 创建处理器
-func NewCallbackHandler(agent MessageProcessor, callbackSecret string, callbackAuthEnabled bool) *CallbackHandler {
-	return &CallbackHandler{agent: agent, callbackSecret: callbackSecret, callbackAuthEnabled: callbackAuthEnabled}
+func NewCallbackHandler(agent MessageProcessor, callbackSecret string, callbackAuthEnabled bool, maxBodyBytes int64) *CallbackHandler {
+	return &CallbackHandler{agent: agent, callbackSecret: callbackSecret, callbackAuthEnabled: callbackAuthEnabled, maxBodyBytes: maxBodyBytes}
 }
 
 // RegisterRoutes 注册路由
@@ -47,13 +49,21 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if h.maxBodyBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, h.maxBodyBytes)
+	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("read callback body failed: %v", err)
+		status := http.StatusBadRequest
 		resp := model.NewSuccessResponse("请求读取失败")
-		debuglog.Printf("callback response status=%d body=%s elapsed=%s", http.StatusBadRequest, mustJSON(resp), time.Since(start))
+		if errors.As(err, new(*http.MaxBytesError)) {
+			status = http.StatusRequestEntityTooLarge
+			resp = model.NewSuccessResponse("请求体过大")
+		}
+		debuglog.Printf("callback response status=%d body=%s elapsed=%s", status, mustJSON(resp), time.Since(start))
 		metrics.Record("callback_handler", time.Since(start), false)
-		writeJSON(w, http.StatusBadRequest, resp)
+		writeJSON(w, status, resp)
 		return
 	}
 	debuglog.Printf("callback request body=%s", string(body))

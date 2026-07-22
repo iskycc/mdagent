@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -60,7 +61,7 @@ func newToolExecutorMock(t *testing.T) (*ToolExecutor, sqlmock.Sqlmock) {
 func TestToolExecutor_bindMiaodiKey_Success(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	mock.ExpectExec("UPDATE agent_users SET apikey").WithArgs("key1", "bound", "u1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "bind_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "bind_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Status: "unbound"}
 	res := exec.Execute(user, "u1", 1, "bind_miaodi_key", `{"key":"key1"}`)
@@ -82,7 +83,7 @@ func TestToolExecutor_bindMiaodiKey_CheckFail(t *testing.T) {
 func TestToolExecutor_sendMiaodiEmailCode_Success(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	mock.ExpectExec("UPDATE agent_users SET email").WithArgs("u@example.com", userStatusWaitingEmailCode, "u1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "", "miaodi", "send_email", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "send_email", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Status: userStatusUnbound}
 	res := exec.Execute(user, "u1", 1, "send_miaodi_email_code", `{"email":"u@example.com"}`)
@@ -105,7 +106,7 @@ func TestToolExecutor_sendMiaodiEmailCode_InvalidEmail(t *testing.T) {
 func TestToolExecutor_bindMiaodiByEmailCode_Success(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	mock.ExpectExec("UPDATE agent_users SET apikey").WithArgs("key-from-email", userStatusBound, "u1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key-from-email", "miaodi", "get_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "get_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Email: "u@example.com", Status: userStatusWaitingEmailCode}
 	res := exec.Execute(user, "u1", 1, "bind_miaodi_by_email_code", `{"code":"123456"}`)
@@ -137,7 +138,7 @@ func TestToolExecutor_getMiaodiKey(t *testing.T) {
 
 func TestToolExecutor_getMiaodiAnnualReport(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "annual_report", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "annual_report", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Status: userStatusBound, APIKey: "key1"}
 	res := exec.Execute(user, "u1", 1, "get_miaodi_annual_report", `{}`)
@@ -149,7 +150,7 @@ func TestToolExecutor_getMiaodiAnnualReport(t *testing.T) {
 func TestToolExecutor_unbindMiaodiKey(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	mock.ExpectExec("UPDATE agent_users SET apikey").WithArgs("u1").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "", "miaodi", "unbind_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "unbind_key", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Status: userStatusBound, APIKey: "key1", Email: "u@example.com"}
 	res := exec.Execute(user, "u1", 1, "unbind_miaodi_key", `{}`)
@@ -183,7 +184,7 @@ func TestToolExecutor_getUserProfile(t *testing.T) {
 
 func TestToolExecutor_saveTextNote_Success(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "put_text", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "put_text", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_text_note", `{"content":"hello"}`)
@@ -195,7 +196,7 @@ func TestToolExecutor_saveTextNote_Success(t *testing.T) {
 func TestToolExecutor_saveTextNote_FailCode(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	exec.miaodi = &fakeMiaodi{checkResult: true, putResult: map[string]interface{}{"code": 50000, "message": "err"}}
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "put_text_failed", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "put_text_failed", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_text_note", `{"content":"hello"}`)
@@ -216,7 +217,7 @@ func TestToolExecutor_saveTextNote_NotBound(t *testing.T) {
 func TestToolExecutor_saveImageNote(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	mock.ExpectExec("INSERT INTO pending_images").WithArgs("key1", "http://img", "b", "c", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "save_image_pending", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "save_image_pending", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_image_note", `{"image_url":"http://img"}`)
@@ -502,6 +503,47 @@ func TestToolExecutor_queryNotesByDate_FiltersNonNotes(t *testing.T) {
 	}
 }
 
+type recordingCache struct {
+	cache.NopCache
+	users map[string]*model.User
+}
+
+func (r *recordingCache) SetUser(_ context.Context, user *model.User) error {
+	if r.users == nil {
+		r.users = make(map[string]*model.User)
+	}
+	r.users[user.ChannelUserID] = user
+	return nil
+}
+
+func TestToolExecutor_sendMiaodiEmailCode_UpdatesCache(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sqlmock failed: %v", err)
+	}
+	defer db.Close()
+	userRepo := repository.NewUserRepo(db)
+	convRepo := repository.NewConversationRepo(db)
+	pendingRepo := repository.NewPendingImageRepo(db)
+	logRepo := repository.NewCallLogRepo(db)
+	miaodi := &fakeMiaodi{checkResult: true, putResult: map[string]interface{}{"code": 20000}}
+	c := &recordingCache{}
+	exec := NewToolExecutor(miaodi, userRepo, convRepo, pendingRepo, logRepo, c, nopPersistQueue{})
+
+	mock.ExpectExec("UPDATE agent_users SET email").
+		WithArgs("u@example.com", userStatusWaitingEmailCode, "u1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	user := &model.User{ChannelUserID: "u1", Status: userStatusUnbound}
+	res := exec.Execute(user, "u1", 1, "send_miaodi_email_code", `{"email":"u@example.com"}`)
+	if res != "邮件已发送，请检查收件箱并回复收到的验证码" {
+		t.Errorf("unexpected result: %s", res)
+	}
+	if c.users["u1"] == nil || c.users["u1"].Status != userStatusWaitingEmailCode {
+		t.Fatalf("expected user cached with waiting_email_code status, got %+v", c.users["u1"])
+	}
+}
+
 func TestToolExecutor_listRecentNotes_QueryError(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log`).WithArgs("u1", 5).WillReturnError(sqlmock.ErrCancelled)
@@ -626,7 +668,7 @@ func TestToolExecutor_unbindMiaodiKey_NotBound(t *testing.T) {
 
 func TestToolExecutor_saveTextNote_RecordError(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "put_text", sqlmock.AnyArg()).WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "put_text", sqlmock.AnyArg()).WillReturnError(sqlmock.ErrCancelled)
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_text_note", `{"content":"hello"}`)
 	if !strings.Contains(res, "已保存到") {
@@ -637,7 +679,7 @@ func TestToolExecutor_saveTextNote_RecordError(t *testing.T) {
 func TestToolExecutor_saveTextNote_MiaodiMessageFallback(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	exec.miaodi = &fakeMiaodi{checkResult: true, putResult: map[string]interface{}{"code": 50000, "message": "server err"}}
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "put_text_failed", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "put_text_failed", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_text_note", `{"content":"hello"}`)
 	if !strings.Contains(res, "server err") {
@@ -648,7 +690,7 @@ func TestToolExecutor_saveTextNote_MiaodiMessageFallback(t *testing.T) {
 func TestToolExecutor_saveTextNote_PutErrorMessage(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	exec.miaodi = &fakeMiaodi{checkResult: true, putResult: map[string]interface{}{"code": 50000}}
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", "key1", "miaodi", "put_text_failed", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "put_text_failed", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_text_note", `{"content":"hello"}`)
 	if !strings.HasPrefix(res, "保存失败") {

@@ -22,26 +22,37 @@ const (
 	defaultMaxToolRounds   = 3
 )
 
-// AgentOptions 控制 Agent 与模型交互时的资源预算。
+// AgentOptions 控制 Agent 与模型交互时的资源预算与幂等去重行为。
 type AgentOptions struct {
-	ModelMaxTokens  int
-	MaxOutputTokens int
+	ModelMaxTokens        int
+	MaxOutputTokens       int
+	ProcessedMessageRepo  ProcessedMessageChecker
+	ProcessingTimeout     time.Duration
+}
+
+// ProcessedMessageChecker 是消息幂等去重接口。
+type ProcessedMessageChecker interface {
+	StartProcessing(channelUserID string, conversationID, messageID int64, processingTimeout time.Duration) (bool, string, error)
+	MarkDone(channelUserID string, conversationID, messageID int64, reply string) error
+	MarkFailed(channelUserID string, conversationID, messageID int64) error
 }
 
 // Agent 是 AI Agent 核心服务
 type Agent struct {
-	llm               LLMClient
-	model             string
-	userRepo          UserStore
-	convRepo          ConversationStore
-	toolExec          ToolRunner
-	intentRouter      *IntentRouter
-	modelMaxTokens    int
-	maxOutputTokens   int
-	cache             cache.Cache
-	persistQueue      PersistQueue
-	systemPromptCache *systemPromptCache
-	llmCallRepo       LLMCallLogger
+	llm                LLMClient
+	model              string
+	userRepo           UserStore
+	convRepo           ConversationStore
+	toolExec           ToolRunner
+	intentRouter       *IntentRouter
+	modelMaxTokens     int
+	maxOutputTokens    int
+	cache              cache.Cache
+	persistQueue       PersistQueue
+	systemPromptCache  *systemPromptCache
+	llmCallRepo        LLMCallLogger
+	processedMsgRepo   ProcessedMessageChecker
+	processingTimeout  time.Duration
 }
 
 // systemPromptCache 按用户状态缓存 system prompt，减少每轮请求时的重复格式化。
@@ -111,6 +122,9 @@ func NewAgentWithLogger(llm LLMClient, modelName string, userRepo UserStore, con
 			opts.MaxOutputTokens = opts.ModelMaxTokens / 4
 		}
 	}
+	if opts.ProcessingTimeout <= 0 {
+		opts.ProcessingTimeout = 30 * time.Second
+	}
 
 	return &Agent{
 		llm:               llm,
@@ -125,14 +139,37 @@ func NewAgentWithLogger(llm LLMClient, modelName string, userRepo UserStore, con
 		persistQueue:      pq,
 		systemPromptCache: newSystemPromptCache(time.Hour),
 		llmCallRepo:       llmCallRepo,
+		processedMsgRepo:  opts.ProcessedMessageRepo,
+		processingTimeout: opts.ProcessingTimeout,
 	}
 }
 
 // ProcessMessage 处理一条 传送鸽 消息，返回最终文本回复
-func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPayload) string {
+func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPayload) (reply string) {
 	channelUserID := payload.User.UserID
 	conversationID := payload.Conversation.ID
-	debuglog.Printf("agent process start user=%s conversation=%d message_id=%d content=%q", channelUserID, conversationID, payload.Message.ID, payload.Message.Content)
+	messageID := payload.Message.ID
+	debuglog.Printf("agent process start user=%s conversation=%d message_id=%d content=%q", channelUserID, conversationID, messageID, payload.Message.Content)
+
+	if a.processedMsgRepo != nil && messageID != 0 {
+		shouldProcess, prevReply, err := a.processedMsgRepo.StartProcessing(channelUserID, conversationID, messageID, a.processingTimeout)
+		if err != nil {
+			log.Printf("check processed message failed: %v", err)
+		} else if !shouldProcess {
+			debuglog.Printf("agent duplicate message skipped user=%s conversation=%d message_id=%d", channelUserID, conversationID, messageID)
+			return prevReply
+		} else {
+			defer func() {
+				if r := recover(); r != nil {
+					_ = a.processedMsgRepo.MarkFailed(channelUserID, conversationID, messageID)
+					panic(r)
+				}
+				if err := a.processedMsgRepo.MarkDone(channelUserID, conversationID, messageID, reply); err != nil {
+					log.Printf("mark message done failed: %v", err)
+				}
+			}()
+		}
+	}
 
 	user, err := a.cache.GetUser(ctx, channelUserID)
 	if err != nil {
@@ -163,7 +200,12 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 			debuglog.Printf("agent append user message fallback failed user=%s conversation=%d error=%v", channelUserID, conversationID, dbErr)
 		}
 	} else {
-		a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, []repository.StoredChatMessage{storedUserMsg})
+		if !a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, []repository.StoredChatMessage{storedUserMsg}) {
+			if dbErr := a.convRepo.AppendMessage(channelUserID, conversationID, userMsg); dbErr != nil {
+				log.Printf("append user message fallback failed: %v", dbErr)
+				debuglog.Printf("agent append user message fallback failed user=%s conversation=%d error=%v", channelUserID, conversationID, dbErr)
+			}
+		}
 		debuglog.Printf("agent appended user message user=%s conversation=%d", channelUserID, conversationID)
 	}
 
@@ -245,7 +287,11 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 					log.Printf("append assistant message fallback failed: %v", dbErr)
 				}
 			} else {
-				a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, []repository.StoredChatMessage{storedAssistantMsg})
+				if !a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, []repository.StoredChatMessage{storedAssistantMsg}) {
+					if dbErr := a.convRepo.AppendMessage(channelUserID, conversationID, assistantMsg); dbErr != nil {
+						log.Printf("append assistant message fallback failed: %v", dbErr)
+					}
+				}
 			}
 			if assistantMsg.Content == "" {
 				return a.debugReturn("agent empty assistant content", "收到空回复")
@@ -292,7 +338,11 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 				log.Printf("append tool round fallback failed: %v", dbErr)
 			}
 		} else {
-			a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, storedRoundMsgs)
+			if !a.persistQueue.EnqueueConv(ctx, channelUserID, conversationID, storedRoundMsgs) {
+				if dbErr := a.convRepo.AppendMessages(channelUserID, conversationID, roundMsgs...); dbErr != nil {
+					log.Printf("append tool round fallback failed: %v", dbErr)
+				}
+			}
 			debuglog.Printf("agent appended tool round user=%s conversation=%d messages=%d", channelUserID, conversationID, len(roundMsgs))
 		}
 	}
