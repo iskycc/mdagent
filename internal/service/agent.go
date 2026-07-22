@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/debuglog"
@@ -28,16 +30,60 @@ type AgentOptions struct {
 
 // Agent 是 AI Agent 核心服务
 type Agent struct {
-	llm             LLMClient
-	model           string
-	userRepo        UserStore
-	convRepo        ConversationStore
-	toolExec        ToolRunner
-	intentRouter    *IntentRouter
-	modelMaxTokens  int
-	maxOutputTokens int
-	cache           cache.Cache
-	persistQueue    PersistQueue
+	llm              LLMClient
+	model            string
+	userRepo         UserStore
+	convRepo         ConversationStore
+	toolExec         ToolRunner
+	intentRouter     *IntentRouter
+	modelMaxTokens   int
+	maxOutputTokens  int
+	cache            cache.Cache
+	persistQueue     PersistQueue
+	systemPromptCache *systemPromptCache
+}
+
+// systemPromptCache 按用户状态缓存 system prompt，减少每轮请求时的重复格式化。
+type systemPromptCache struct {
+	mu    sync.RWMutex
+	items map[string]cacheEntry
+	ttl   time.Duration
+}
+
+type cacheEntry struct {
+	prompt string
+	expiry time.Time
+}
+
+func newSystemPromptCache(ttl time.Duration) *systemPromptCache {
+	return &systemPromptCache{
+		items: make(map[string]cacheEntry),
+		ttl:   ttl,
+	}
+}
+
+func (c *systemPromptCache) key(user *model.User) string {
+	title := user.Title
+	if title == "" || title == "null" {
+		title = timeutil.Date()
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%s", user.Status, user.Book, user.Chara, title, timeutil.Date())
+}
+
+func (c *systemPromptCache) get(user *model.User) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.items[c.key(user)]
+	if !ok || time.Now().After(entry.expiry) {
+		return "", false
+	}
+	return entry.prompt, true
+}
+
+func (c *systemPromptCache) set(user *model.User, prompt string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.items[c.key(user)] = cacheEntry{prompt: prompt, expiry: time.Now().Add(c.ttl)}
 }
 
 // NewAgent 创建 Agent
@@ -61,16 +107,17 @@ func NewAgentWithOptions(llm LLMClient, modelName string, userRepo UserStore, co
 	}
 
 	return &Agent{
-		llm:             llm,
-		model:           modelName,
-		userRepo:        userRepo,
-		convRepo:        convRepo,
-		toolExec:        toolExec,
-		intentRouter:    NewIntentRouter(toolExec),
-		modelMaxTokens:  opts.ModelMaxTokens,
-		maxOutputTokens: opts.MaxOutputTokens,
-		cache:           c,
-		persistQueue:    pq,
+		llm:               llm,
+		model:             modelName,
+		userRepo:          userRepo,
+		convRepo:          convRepo,
+		toolExec:          toolExec,
+		intentRouter:      NewIntentRouter(toolExec),
+		modelMaxTokens:    opts.ModelMaxTokens,
+		maxOutputTokens:   opts.MaxOutputTokens,
+		cache:             c,
+		persistQueue:      pq,
+		systemPromptCache: newSystemPromptCache(time.Hour),
 	}
 }
 
@@ -128,9 +175,14 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 	history := repository.StoredToChatMessages(historyStored)
 	debuglog.Printf("agent history loaded user=%s conversation=%d messages=%d", channelUserID, conversationID, len(history))
 
+	systemPrompt, _ := a.systemPromptCache.get(user)
+	if systemPrompt == "" {
+		systemPrompt = buildSystemPrompt(user)
+		a.systemPromptCache.set(user, systemPrompt)
+	}
 	systemMsg := openai.ChatMessage{
 		Role:    "system",
-		Content: buildSystemPrompt(user),
+		Content: systemPrompt,
 	}
 	messages := append([]openai.ChatMessage{systemMsg}, history...)
 

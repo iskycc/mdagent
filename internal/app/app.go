@@ -38,6 +38,7 @@ func Run(ctx context.Context, db *sql.DB, cfg *config.Config) error {
 	pendingRepo := repository.NewPendingImageRepo(db)
 	callLogRepo := repository.NewCallLogRepo(db)
 	startConversationCleanup(ctx, convRepo)
+	startCallLogCleanup(ctx, callLogRepo)
 
 	redisAddr := cfg.RedisHost + ":" + cfg.RedisPort
 	redisCache := cache.NewRedisCache(redisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisEnabled)
@@ -114,6 +115,29 @@ func startConversationCleanup(ctx context.Context, convRepo *repository.Conversa
 				}
 				if removed > 0 {
 					debuglog.Printf("cleanup expired conversation messages removed=%d", removed)
+				}
+			}
+		}
+	}()
+}
+
+func startCallLogCleanup(ctx context.Context, callLogRepo *repository.CallLogRepo) {
+	ticker := time.NewTicker(time.Hour)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				deleted, err := callLogRepo.CleanupOlderThan(30)
+				if err != nil {
+					log.Printf("cleanup call log failed: %v", err)
+					debuglog.Printf("cleanup call log failed error=%v", err)
+					continue
+				}
+				if deleted > 0 {
+					debuglog.Printf("cleanup call log deleted=%d", deleted)
 				}
 			}
 		}

@@ -393,8 +393,8 @@ func TestToolExecutor_queryNotesByDate(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	rows := sqlmock.NewRows([]string{"action", "created_at"}).
 		AddRow("put_text", time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC))
-	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND DATE\(created_at\) = \?`).
-		WithArgs("u1", "2026-06-30").WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND created_at >= \? AND created_at < \?`).
+		WithArgs("u1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(rows)
 
 	res := exec.Execute(&model.User{}, "u1", 100, "query_notes_by_date", `{"date":"2026-06-30"}`)
 	if res == "" || res == "查询失败" {
@@ -474,8 +474,8 @@ func TestToolExecutor_queryNotesByDate_InvalidArgs(t *testing.T) {
 
 func TestToolExecutor_queryNotesByDate_QueryError(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
-	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND DATE\(created_at\) = \?`).
-		WithArgs("u1", "2026-06-30").WillReturnError(sqlmock.ErrCancelled)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND created_at >= \? AND created_at < \?`).
+		WithArgs("u1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnError(sqlmock.ErrCancelled)
 	res := exec.Execute(&model.User{}, "u1", 100, "query_notes_by_date", `{"date":"2026-06-30"}`)
 	if !strings.HasPrefix(res, "查询失败：") {
 		t.Errorf("unexpected result: %s", res)
@@ -486,8 +486,8 @@ func TestToolExecutor_queryNotesByDate_FiltersNonNotes(t *testing.T) {
 	exec, mock := newToolExecutorMock(t)
 	rows := sqlmock.NewRows([]string{"action", "created_at"}).
 		AddRow("bind_key", time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC))
-	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND DATE\(created_at\) = \?`).
-		WithArgs("u1", "2026-06-30").WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND created_at >= \? AND created_at < \?`).
+		WithArgs("u1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(rows)
 	res := exec.Execute(&model.User{}, "u1", 100, "query_notes_by_date", `{"date":"2026-06-30"}`)
 	if res != "2026-06-30 没有保存记录。" {
 		t.Errorf("unexpected result: %s", res)

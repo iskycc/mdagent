@@ -171,6 +171,19 @@ func parseDateValue(v interface{}) (string, error) {
 	}
 }
 
+// CleanupOlderThan 删除指定天数之前的调用日志。
+func (r *CallLogRepo) CleanupOlderThan(days int) (int64, error) {
+	if days <= 0 {
+		days = 30
+	}
+	cutoff := timeutil.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+	res, err := r.db.Exec("DELETE FROM api_call_log WHERE created_at < ?", cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // RecentByUser 查询指定用户最近 N 条调用记录（按时间倒序）
 func (r *CallLogRepo) RecentByUser(channelUserID string, limit int) ([]UserCallLog, error) {
 	if limit <= 0 {
@@ -202,13 +215,19 @@ func (r *CallLogRepo) RecentByUser(channelUserID string, limit int) ([]UserCallL
 	return results, rows.Err()
 }
 
-// ByDate 查询指定用户某一天的调用记录
+// ByDate 查询指定用户某一天的调用记录。
+// 使用 created_at 的范围查询，避免对 DATE(created_at) 使用函数导致索引失效。
 func (r *CallLogRepo) ByDate(channelUserID, date string) ([]UserCallLog, error) {
+	start, err := time.ParseInLocation("2006-01-02", date, timeutil.BeijingLocation())
+	if err != nil {
+		return nil, fmt.Errorf("invalid date %q: %w", date, err)
+	}
+	end := start.AddDate(0, 0, 1)
 	rows, err := r.db.Query(`
 		SELECT action, created_at
 		FROM api_call_log
-		WHERE channel_user_id = ? AND DATE(created_at) = ?
-		ORDER BY created_at DESC`, channelUserID, date)
+		WHERE channel_user_id = ? AND created_at >= ? AND created_at < ?
+		ORDER BY created_at DESC`, channelUserID, start, end)
 	if err != nil {
 		return nil, err
 	}

@@ -68,13 +68,25 @@ func (c *RedisCache) GetMessages(ctx context.Context, channelUserID string, conv
 	if !c.enabled {
 		return nil, fmt.Errorf("redis disabled")
 	}
-	raw, err := c.client.Get(ctx, convKey(channelUserID, conversationID)).Bytes()
+	key := convKey(channelUserID, conversationID)
+	exists, err := c.client.Exists(ctx, key).Result()
 	if err != nil {
 		return nil, err
 	}
-	var msgs []repository.StoredChatMessage
-	if err := json.Unmarshal(raw, &msgs); err != nil {
+	if exists == 0 {
+		return nil, redis.Nil
+	}
+	elems, err := c.client.LRange(ctx, key, 0, -1).Result()
+	if err != nil {
 		return nil, err
+	}
+	msgs := make([]repository.StoredChatMessage, 0, len(elems))
+	for _, elem := range elems {
+		var msg repository.StoredChatMessage
+		if err := json.Unmarshal([]byte(elem), &msg); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, msg)
 	}
 	return msgs, nil
 }
@@ -83,23 +95,46 @@ func (c *RedisCache) SetMessages(ctx context.Context, channelUserID string, conv
 	if !c.enabled {
 		return fmt.Errorf("redis disabled")
 	}
-	raw, err := json.Marshal(msgs)
-	if err != nil {
-		return err
+	key := convKey(channelUserID, conversationID)
+	pipe := c.client.Pipeline()
+	pipe.Del(ctx, key)
+	if len(msgs) > 0 {
+		elems := make([]interface{}, 0, len(msgs))
+		for _, msg := range msgs {
+			raw, err := json.Marshal(msg)
+			if err != nil {
+				return err
+			}
+			elems = append(elems, raw)
+		}
+		pipe.RPush(ctx, key, elems...)
+		pipe.Expire(ctx, key, ttl)
 	}
-	return c.client.Set(ctx, convKey(channelUserID, conversationID), raw, ttl).Err()
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (c *RedisCache) AppendMessages(ctx context.Context, channelUserID string, conversationID int64, msgs ...repository.StoredChatMessage) error {
 	if !c.enabled {
 		return fmt.Errorf("redis disabled")
 	}
-	existing, err := c.GetMessages(ctx, channelUserID, conversationID)
-	if err != nil && err != redis.Nil {
-		return err
+	if len(msgs) == 0 {
+		return nil
 	}
-	combined := append(existing, msgs...)
-	return c.SetMessages(ctx, channelUserID, conversationID, combined)
+	key := convKey(channelUserID, conversationID)
+	elems := make([]interface{}, 0, len(msgs))
+	for _, msg := range msgs {
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		elems = append(elems, raw)
+	}
+	pipe := c.client.Pipeline()
+	pipe.RPush(ctx, key, elems...)
+	pipe.Expire(ctx, key, ttl)
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (c *RedisCache) ClearConversation(ctx context.Context, channelUserID string, conversationID int64) error {
@@ -113,13 +148,25 @@ func (c *RedisCache) GetRecentLogs(ctx context.Context, channelUserID string) ([
 	if !c.enabled {
 		return nil, fmt.Errorf("redis disabled")
 	}
-	raw, err := c.client.Get(ctx, logsKey(channelUserID)).Bytes()
+	key := logsKey(channelUserID)
+	exists, err := c.client.Exists(ctx, key).Result()
 	if err != nil {
 		return nil, err
 	}
-	var logs []repository.UserCallLog
-	if err := json.Unmarshal(raw, &logs); err != nil {
+	if exists == 0 {
+		return nil, redis.Nil
+	}
+	elems, err := c.client.LRange(ctx, key, 0, 19).Result()
+	if err != nil {
 		return nil, err
+	}
+	logs := make([]repository.UserCallLog, 0, len(elems))
+	for _, elem := range elems {
+		var log repository.UserCallLog
+		if err := json.Unmarshal([]byte(elem), &log); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
 	}
 	return logs, nil
 }
@@ -128,26 +175,41 @@ func (c *RedisCache) SetRecentLogs(ctx context.Context, channelUserID string, lo
 	if !c.enabled {
 		return fmt.Errorf("redis disabled")
 	}
-	raw, err := json.Marshal(logs)
-	if err != nil {
-		return err
+	key := logsKey(channelUserID)
+	pipe := c.client.Pipeline()
+	pipe.Del(ctx, key)
+	if len(logs) > 0 {
+		// logs[0] 是最新的，所以从末尾开始 LPUSH，保证列表顺序与入参一致。
+		elems := make([]interface{}, 0, len(logs))
+		for i := len(logs) - 1; i >= 0; i-- {
+			raw, err := json.Marshal(logs[i])
+			if err != nil {
+				return err
+			}
+			elems = append(elems, raw)
+		}
+		pipe.LPush(ctx, key, elems...)
+		pipe.Expire(ctx, key, ttl)
 	}
-	return c.client.Set(ctx, logsKey(channelUserID), raw, ttl).Err()
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (c *RedisCache) AppendLog(ctx context.Context, channelUserID string, log repository.UserCallLog) error {
 	if !c.enabled {
 		return fmt.Errorf("redis disabled")
 	}
-	logs, err := c.GetRecentLogs(ctx, channelUserID)
-	if err != nil && err != redis.Nil {
+	raw, err := json.Marshal(log)
+	if err != nil {
 		return err
 	}
-	logs = append([]repository.UserCallLog{log}, logs...)
-	if len(logs) > 20 {
-		logs = logs[:20]
-	}
-	return c.SetRecentLogs(ctx, channelUserID, logs)
+	key := logsKey(channelUserID)
+	pipe := c.client.Pipeline()
+	pipe.LPush(ctx, key, raw)
+	pipe.LTrim(ctx, key, 0, 19)
+	pipe.Expire(ctx, key, ttl)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 func userKey(channelUserID string) string {

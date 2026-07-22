@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"miaodi-agent/internal/cache"
 	"miaodi-agent/internal/debuglog"
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/internal/timeutil"
@@ -23,6 +25,11 @@ const (
 )
 
 var validEmailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+
+var (
+	cachedToolDefs     []openai.ToolDefinition
+	cachedToolDefsOnce sync.Once
+)
 
 // ToolExecutor 工具执行器
 type ToolExecutor struct {
@@ -54,237 +61,241 @@ func (e *ToolExecutor) SetModel(model string) {
 	e.model = model
 }
 
-// ToolDefinitions 返回模型可见的工具列表
+// ToolDefinitions 返回模型可见的工具列表。结果在进程内只构造一次。
 func ToolDefinitions() []openai.ToolDefinition {
-	tools := []openai.ToolDefinition{
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "bind_miaodi_key",
-				Description: "绑定喵滴 API Key。当用户想绑定喵滴账号或提供了一串类似 key 的字符串时调用。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"key": map[string]interface{}{
-							"type":        "string",
-							"description": "喵滴 API Key",
+	cachedToolDefsOnce.Do(func() {
+		tools := []openai.ToolDefinition{
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "bind_miaodi_key",
+					Description: "绑定喵滴 API Key。当用户想绑定喵滴账号或提供了一串类似 key 的字符串时调用。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"key": map[string]interface{}{
+								"type":        "string",
+								"description": "喵滴 API Key",
+							},
 						},
-					},
-					"required": []string{"key"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "send_miaodi_email_code",
-				Description: "向用户的喵滴注册邮箱发送验证码。当用户想用邮箱绑定喵滴账号、提供邮箱获取验证码时调用。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"email": map[string]interface{}{
-							"type":        "string",
-							"description": "喵滴账号邮箱",
-						},
-					},
-					"required": []string{"email"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "bind_miaodi_by_email_code",
-				Description: "使用邮箱验证码换取喵滴 API Key 并完成绑定。当用户已收到验证码并提供验证码时调用。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"email": map[string]interface{}{
-							"type":        "string",
-							"description": "可选，喵滴账号邮箱；为空时使用上次发送验证码的邮箱",
-						},
-						"code": map[string]interface{}{
-							"type":        "string",
-							"description": "邮箱验证码",
-						},
-					},
-					"required": []string{"code"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "set_save_path",
-				Description: "设置后续保存笔记的位置，包括书本、章节、标题。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"book": map[string]interface{}{
-							"type":        "string",
-							"description": "书本名称",
-						},
-						"chapter": map[string]interface{}{
-							"type":        "string",
-							"description": "章节名称",
-						},
-						"title": map[string]interface{}{
-							"type":        "string",
-							"description": "笔记标题，为空时使用当天日期作为标题",
-						},
-					},
-					"required": []string{"book", "chapter"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "get_user_profile",
-				Description: "获取当前用户的绑定状态和保存路径。",
-				Parameters: map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "get_miaodi_key",
-				Description: "查看当前用户已绑定的喵滴 API Key。只有用户明确要求获取当前绑定 key 时调用。",
-				Parameters: map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "get_miaodi_annual_report",
-				Description: "获取喵滴年度报告链接。当用户询问年度报告、报告地址时调用。",
-				Parameters: map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "unbind_miaodi_key",
-				Description: "解除当前用户绑定的喵滴 API Key。当用户明确说解除绑定、解绑喵滴账号时调用。",
-				Parameters: map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "save_text_note",
-				Description: "把文本内容保存到喵滴笔记。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"content": map[string]interface{}{
-							"type":        "string",
-							"description": "要保存的文本内容",
-						},
-						"title": map[string]interface{}{
-							"type":        "string",
-							"description": "可选标题，覆盖当前设置的标题",
-						},
-					},
-					"required": []string{"content"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "save_image_note",
-				Description: "把图片链接记录到待上传队列，等待定时任务扫描后上传到喵滴。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"image_url": map[string]interface{}{
-							"type":        "string",
-							"description": "图片 URL",
-						},
-						"title": map[string]interface{}{
-							"type":        "string",
-							"description": "可选标题",
-						},
-					},
-					"required": []string{"image_url"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "reset_conversation",
-				Description: "清空当前会话历史。当用户想重置对话、清空上下文、忘记刚才的对话时调用。",
-				Parameters: map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "show_help",
-				Description: "返回 Bot 的能力说明。当用户问你能做什么、怎么用、帮助等时调用。",
-				Parameters: map[string]interface{}{
-					"type":       "object",
-					"properties": map[string]interface{}{},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "list_recent_notes",
-				Description: "列出用户最近保存的笔记摘要。当用户问最近保存了什么、最近的操作记录等时调用。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"limit": map[string]interface{}{
-							"type":        "integer",
-							"description": "返回条数，默认 5，最大 20",
-						},
+						"required": []string{"key"},
 					},
 				},
 			},
-		},
-		{
-			Type: "function",
-			Function: openai.FunctionDef{
-				Name:        "query_notes_by_date",
-				Description: "按日期查询用户保存的笔记。当用户问某一天的笔记、昨天的记录等时调用。",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"date": map[string]interface{}{
-							"type":        "string",
-							"description": "日期，格式 YYYY-MM-DD",
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "send_miaodi_email_code",
+					Description: "向用户的喵滴注册邮箱发送验证码。当用户想用邮箱绑定喵滴账号、提供邮箱获取验证码时调用。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"email": map[string]interface{}{
+								"type":        "string",
+								"description": "喵滴账号邮箱",
+							},
 						},
+						"required": []string{"email"},
 					},
-					"required": []string{"date"},
 				},
 			},
-		},
-	}
-	return append(tools, commonToolDefinitions()...)
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "bind_miaodi_by_email_code",
+					Description: "使用邮箱验证码换取喵滴 API Key 并完成绑定。当用户已收到验证码并提供验证码时调用。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"email": map[string]interface{}{
+								"type":        "string",
+								"description": "可选，喵滴账号邮箱；为空时使用上次发送验证码的邮箱",
+							},
+							"code": map[string]interface{}{
+								"type":        "string",
+								"description": "邮箱验证码",
+							},
+						},
+						"required": []string{"code"},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "set_save_path",
+					Description: "设置后续保存笔记的位置，包括书本、章节、标题。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"book": map[string]interface{}{
+								"type":        "string",
+								"description": "书本名称",
+							},
+							"chapter": map[string]interface{}{
+								"type":        "string",
+								"description": "章节名称",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "笔记标题，为空时使用当天日期作为标题",
+							},
+						},
+						"required": []string{"book", "chapter"},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "get_user_profile",
+					Description: "获取当前用户的绑定状态和保存路径。",
+					Parameters: map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "get_miaodi_key",
+					Description: "查看当前用户已绑定的喵滴 API Key。只有用户明确要求获取当前绑定 key 时调用。",
+					Parameters: map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "get_miaodi_annual_report",
+					Description: "获取喵滴年度报告链接。当用户询问年度报告、报告地址时调用。",
+					Parameters: map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "unbind_miaodi_key",
+					Description: "解除当前用户绑定的喵滴 API Key。当用户明确说解除绑定、解绑喵滴账号时调用。",
+					Parameters: map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "save_text_note",
+					Description: "把文本内容保存到喵滴笔记。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "要保存的文本内容",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "可选标题，覆盖当前设置的标题",
+							},
+						},
+						"required": []string{"content"},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "save_image_note",
+					Description: "把图片链接记录到待上传队列，等待定时任务扫描后上传到喵滴。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"image_url": map[string]interface{}{
+								"type":        "string",
+								"description": "图片 URL",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "可选标题",
+							},
+						},
+						"required": []string{"image_url"},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "reset_conversation",
+					Description: "清空当前会话历史。当用户想重置对话、清空上下文、忘记刚才的对话时调用。",
+					Parameters: map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "show_help",
+					Description: "返回 Bot 的能力说明。当用户问你能做什么、怎么用、帮助等时调用。",
+					Parameters: map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "list_recent_notes",
+					Description: "列出用户最近保存的笔记摘要。当用户问最近保存了什么、最近的操作记录等时调用。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"limit": map[string]interface{}{
+								"type":        "integer",
+								"description": "返回条数，默认 5，最大 20",
+							},
+						},
+					},
+				},
+			},
+			{
+				Type: "function",
+				Function: openai.FunctionDef{
+					Name:        "query_notes_by_date",
+					Description: "按日期查询用户保存的笔记。当用户问某一天的笔记、昨天的记录等时调用。",
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"date": map[string]interface{}{
+								"type":        "string",
+								"description": "日期，格式 YYYY-MM-DD",
+							},
+						},
+						"required": []string{"date"},
+					},
+				},
+			},
+		}
+		cachedToolDefs = append(tools, commonToolDefinitions()...)
+	})
+	return cachedToolDefs
 }
 
 // Execute 根据工具名和参数执行，返回给模型看的结果字符串
 func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversationID int64, name string, arguments string) string {
 	debuglog.Printf("tool execute start user=%s conversation=%d name=%s arguments=%s", channelUserID, conversationID, name, arguments)
+	span := metrics.Start("tool_execute_" + name)
 	var result string
 	switch name {
 	case "bind_miaodi_key":
@@ -336,6 +347,8 @@ func (e *ToolExecutor) Execute(user *model.User, channelUserID string, conversat
 	default:
 		result = fmt.Sprintf("未知工具: %s", name)
 	}
+	success := !strings.HasPrefix(result, "未知工具") && !strings.Contains(result, "失败")
+	span.Finish(success)
 	debuglog.Printf("tool execute result user=%s conversation=%d name=%s result=%q", channelUserID, conversationID, name, result)
 	return result
 }

@@ -18,6 +18,11 @@ var (
 	numberPattern     = regexp.MustCompile(`-?\d+`)
 	numberCodePattern = regexp.MustCompile(`[0-9]{4,8}`)
 	alphaCodePattern  = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+
+	// 以下正则原先在函数内部每次调用都重新编译，提到包级变量避免重复开销。
+	dateDeltaPattern       = regexp.MustCompile(`(\d+)\s*天\s*(后|前)`)
+	chinesePathPattern     = regexp.MustCompile(`《([^》]+)》\s*第?\s*([^章《》]+)\s*章(?:节)?\s*《([^》]+)》`)
+	chinesePathAltPattern  = regexp.MustCompile(`书本?[:：]\s*([^,，\s]+).*章节?[:：]\s*([^,，\s]+)(?:.*标题[:：]\s*([^,，\s]+))?`)
 )
 
 // IntentRouter 为小模型兜底处理高置信度意图。
@@ -243,7 +248,7 @@ func parseDateCalculateIntent(text string) (map[string]interface{}, bool) {
 	if strings.Contains(text, "前天") {
 		return map[string]interface{}{"base_date": "today", "days_delta": -2}, true
 	}
-	matches := regexp.MustCompile(`(\d+)\s*天\s*(后|前)`).FindStringSubmatch(text)
+	matches := dateDeltaPattern.FindStringSubmatch(text)
 	if len(matches) != 3 {
 		return nil, false
 	}
@@ -458,10 +463,10 @@ func parsePathIntent(original, normalized string) (map[string]string, bool) {
 }
 
 func parseChinesePath(text string) (string, string, string) {
-	if matches := regexp.MustCompile(`《([^》]+)》\s*第?\s*([^章《》]+)\s*章(?:节)?\s*《([^》]+)》`).FindStringSubmatch(text); len(matches) == 4 {
+	if matches := chinesePathPattern.FindStringSubmatch(text); len(matches) == 4 {
 		return strings.TrimSpace(matches[1]), strings.TrimSpace(matches[2]), strings.TrimSpace(matches[3])
 	}
-	if matches := regexp.MustCompile(`书本?[:：]\s*([^,，\s]+).*章节?[:：]\s*([^,，\s]+)(?:.*标题[:：]\s*([^,，\s]+))?`).FindStringSubmatch(text); len(matches) >= 3 {
+	if matches := chinesePathAltPattern.FindStringSubmatch(text); len(matches) >= 3 {
 		title := ""
 		if len(matches) == 4 {
 			title = strings.TrimSpace(matches[3])

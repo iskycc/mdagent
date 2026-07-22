@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/repository"
 	"miaodi-agent/internal/timeutil"
 )
@@ -20,6 +21,7 @@ type StatsData struct {
 	Daily7Days         []repository.DailyCallStat  `json:"daily_7_days"`
 	Daily30Days        []repository.DailyCallStat  `json:"daily_30_days"`
 	ActionStats        []repository.ActionCallStat `json:"action_stats"`
+	Performance        []metrics.MetricSnapshot    `json:"performance"`
 	GeneratedAt        string                      `json:"generated_at"`
 }
 
@@ -103,6 +105,8 @@ func (s *StatsService) GetStats() (*StatsData, error) {
 		return nil, err
 	}
 	data.ActionStats = actionStats
+
+	data.Performance = metrics.Snapshot()
 
 	return data, nil
 }

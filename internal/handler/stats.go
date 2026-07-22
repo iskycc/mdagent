@@ -94,6 +94,20 @@ const statsTemplate = `<!DOCTYPE html>
       <div class="text-sm text-slate-400">数据生成时间：<span id="generated-at"></span></div>
     </div>
 
+    <!-- Tab 导航 -->
+    <div class="mb-6 border-b border-slate-200">
+      <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+        <button onclick="switchTab('overview')" id="tab-overview" class="tab-btn border-indigo-500 text-indigo-600 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+          概览
+        </button>
+        <button onclick="switchTab('performance')" id="tab-performance" class="tab-btn border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+          性能统计
+        </button>
+      </nav>
+    </div>
+
+    <!-- 概览 Tab -->
+    <div id="panel-overview" class="tab-panel">
     <!-- 核心指标卡片 -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
       <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
@@ -155,6 +169,32 @@ const statsTemplate = `<!DOCTYPE html>
           <div class="text-2xl font-bold text-slate-800 mt-1" id="active-30">0</div>
         </div>
         <div class="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">🌍</div>
+      </div>
+    </div>
+    </div>
+
+    <!-- 性能统计 Tab -->
+    <div id="panel-performance" class="tab-panel hidden">
+      <div class="bg-white rounded-2xl shadow-sm p-6 border border-slate-100">
+        <h2 class="text-lg font-semibold text-slate-800 mb-4">接口性能统计</h2>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium text-slate-500">接口</th>
+                <th class="px-4 py-3 text-right font-medium text-slate-500">调用次数</th>
+                <th class="px-4 py-3 text-right font-medium text-slate-500">成功率</th>
+                <th class="px-4 py-3 text-right font-medium text-slate-500">平均 (ms)</th>
+                <th class="px-4 py-3 text-right font-medium text-slate-500">P50</th>
+                <th class="px-4 py-3 text-right font-medium text-slate-500">P90</th>
+                <th class="px-4 py-3 text-right font-medium text-slate-500">P95</th>
+                <th class="px-4 py-3 text-right font-medium text-slate-500">P99</th>
+              </tr>
+            </thead>
+            <tbody id="performance-table-body" class="divide-y divide-slate-200"></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-slate-400 mt-4">* 数据自进程启动开始累积，页面刷新后重置。</p>
       </div>
     </div>
 
@@ -221,6 +261,39 @@ const statsTemplate = `<!DOCTYPE html>
       }]
     });
     window.addEventListener('resize', () => pieChart.resize());
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab-panel').forEach(el => el.classList.add('hidden'));
+      document.getElementById('panel-' + name).classList.remove('hidden');
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('border-indigo-500', 'text-indigo-600');
+        btn.classList.add('border-transparent', 'text-slate-500');
+      });
+      const active = document.getElementById('tab-' + name);
+      active.classList.remove('border-transparent', 'text-slate-500');
+      active.classList.add('border-indigo-500', 'text-indigo-600');
+    }
+
+    function renderPerformanceTable() {
+      const tbody = document.getElementById('performance-table-body');
+      const rows = (stats.performance || []).map(p => {
+        const successRate = (p.success_rate * 100).toFixed(1) + '%';
+        const successClass = p.success_rate >= 0.99 ? 'text-emerald-600' : p.success_rate >= 0.9 ? 'text-amber-600' : 'text-rose-600';
+        return '<tr class="hover:bg-slate-50">' +
+          '<td class="px-4 py-3 font-medium text-slate-700">' + p.name + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + p.count.toLocaleString() + '</td>' +
+          '<td class="px-4 py-3 text-right ' + successClass + '">' + successRate + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + p.avg_ms.toFixed(1) + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + p.p50_ms.toFixed(1) + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + p.p90_ms.toFixed(1) + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + p.p95_ms.toFixed(1) + '</td>' +
+          '<td class="px-4 py-3 text-right text-slate-600">' + p.p99_ms.toFixed(1) + '</td>' +
+          '</tr>';
+      }).join('');
+      tbody.innerHTML = rows || '<tr><td colspan="8" class="px-4 py-6 text-center text-slate-400">暂无性能数据</td></tr>';
+    }
+
+    renderPerformanceTable();
   </script>
 </body>
 </html>

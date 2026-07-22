@@ -31,6 +31,8 @@ const (
 	taskKindLog
 )
 
+const workerCount = 3
+
 type task struct {
 	kind           taskKind
 	channelUserID  string
@@ -68,16 +70,18 @@ func (q *PersistQueue) EnqueueLog(ctx context.Context, channelUserID, apikey, ch
 }
 
 func (q *PersistQueue) Run(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case t := <-q.tasks:
-				q.process(ctx, t)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case t := <-q.tasks:
+					q.process(ctx, t)
+				}
 			}
-		}
-	}()
+		}()
+	}
 }
 
 func (q *PersistQueue) process(ctx context.Context, t task) {

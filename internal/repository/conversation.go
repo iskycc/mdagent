@@ -206,11 +206,29 @@ func (r *ConversationRepo) appendMessagesTx(channelUserID string, conversationID
 
 // CleanupExpiredMessages 删除 24 小时窗口外的历史消息。
 func (r *ConversationRepo) CleanupExpiredMessages(cutoff time.Time) (int, error) {
+	cutoff = cutoff.In(timeutil.BeijingLocation())
+
+	// 第一步：直接删除整个会话都已过期的冷数据，避免加载大量消息内容。
+	var staleRemoved int
+	if err := r.db.QueryRow(`
+		SELECT COALESCE(SUM(JSON_LENGTH(messages)), 0)
+		FROM agent_conversations
+		WHERE updated_at < ?`, cutoff).Scan(&staleRemoved); err != nil {
+		return 0, fmt.Errorf("count stale conversations failed: %w", err)
+	}
+	if _, err := r.db.Exec(`
+		DELETE FROM agent_conversations
+		WHERE updated_at < ?`, cutoff); err != nil {
+		return 0, fmt.Errorf("delete stale conversations failed: %w", err)
+	}
+
+	// 第二步：只处理仍有活跃消息的会话，裁剪过期条目。
 	rows, err := r.db.Query(`
 		SELECT channel_user_id, conversation_id, messages, updated_at
-		FROM agent_conversations`)
+		FROM agent_conversations
+		WHERE updated_at >= ?`, cutoff)
 	if err != nil {
-		return 0, err
+		return staleRemoved, err
 	}
 	defer rows.Close()
 
@@ -224,15 +242,15 @@ func (r *ConversationRepo) CleanupExpiredMessages(cutoff time.Time) (int, error)
 	for rows.Next() {
 		var row conversationRow
 		if err := rows.Scan(&row.channelUserID, &row.conversationID, &row.raw, &row.updatedAt); err != nil {
-			return 0, err
+			return staleRemoved, err
 		}
 		conversations = append(conversations, row)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return staleRemoved, err
 	}
 
-	removed := 0
+	removed := staleRemoved
 	for _, row := range conversations {
 		stored, err := decodeStoredMessages(row.raw, row.updatedAt)
 		if err != nil {

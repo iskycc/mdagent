@@ -178,6 +178,21 @@ func truncateTextToTokensForModel(model, text string, maxTokens int) string {
 		return ""
 	}
 	limit := maxTokens - suffixTokens
+
+	// 优先使用真实 tokenizer 一次性编码，避免 O(n²) 的逐字符重复编码。
+	if enc := tokenizer.Encoding(); enc != nil {
+		tokens := tokenizer.Encode(text)
+		if len(tokens) <= limit {
+			return text
+		}
+		decoded := tokenizer.Decode(tokens[:limit])
+		if decoded == "" {
+			return ""
+		}
+		return decoded + suffix
+	}
+
+	// fallback：无 tokenizer 时按 rune 估算。
 	used := 0
 	out := strings.Builder{}
 	for _, r := range text {
@@ -253,6 +268,24 @@ func (c tokenCounter) TextTokens(text string) int {
 		return len(c.encoding.Encode(text, nil, nil))
 	}
 	return fallbackTextTokens(text)
+}
+
+func (c tokenCounter) Encoding() *tiktoken.Tiktoken {
+	return c.encoding
+}
+
+func (c tokenCounter) Encode(text string) []int {
+	if c.encoding == nil {
+		return nil
+	}
+	return c.encoding.Encode(text, nil, nil)
+}
+
+func (c tokenCounter) Decode(tokens []int) string {
+	if c.encoding == nil {
+		return ""
+	}
+	return c.encoding.Decode(tokens)
 }
 
 func getTokenEncoding(model string) tokenEncoding {

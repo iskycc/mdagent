@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"miaodi-agent/internal/debuglog"
+	"miaodi-agent/internal/metrics"
 	"miaodi-agent/internal/model"
 )
 
@@ -39,6 +40,7 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 
 	if r.Method != http.MethodPost {
 		debuglog.Printf("callback rejected status=%d reason=method_not_allowed elapsed=%s", http.StatusMethodNotAllowed, time.Since(start))
+		metrics.Record("callback_handler", time.Since(start), false)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -48,6 +50,7 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 		log.Printf("read callback body failed: %v", err)
 		resp := model.NewSuccessResponse("请求读取失败")
 		debuglog.Printf("callback response status=%d body=%s elapsed=%s", http.StatusBadRequest, mustJSON(resp), time.Since(start))
+		metrics.Record("callback_handler", time.Since(start), false)
 		writeJSON(w, http.StatusBadRequest, resp)
 		return
 	}
@@ -58,6 +61,7 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 		log.Printf("decode callback body failed: %v", err)
 		resp := model.NewSuccessResponse("请求格式错误")
 		debuglog.Printf("callback response status=%d body=%s elapsed=%s", http.StatusBadRequest, mustJSON(resp), time.Since(start))
+		metrics.Record("callback_handler", time.Since(start), false)
 		writeJSON(w, http.StatusBadRequest, resp)
 		return
 	}
@@ -65,6 +69,7 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 	if payload.EventType != "user_message" {
 		resp := model.NewSuccessResponse("")
 		debuglog.Printf("callback ignored event_type=%s response=%s elapsed=%s", payload.EventType, mustJSON(resp), time.Since(start))
+		metrics.Record("callback_handler", time.Since(start), true)
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -76,6 +81,7 @@ func (h *CallbackHandler) handleCallback(w http.ResponseWriter, r *http.Request)
 	reply := h.agent.ProcessMessage(ctx, &payload)
 	resp := model.NewSuccessResponse(reply)
 	debuglog.Printf("callback response status=%d body=%s elapsed=%s", http.StatusOK, mustJSON(resp), time.Since(start))
+	metrics.Record("callback_handler", time.Since(start), true)
 	writeJSON(w, http.StatusOK, resp)
 }
 

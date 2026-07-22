@@ -182,9 +182,11 @@ func TestConversationRepo_CleanupExpiredMessages(t *testing.T) {
 		{"role":"user","content":"old","created_at":"2026-07-19T11:59:59+08:00"},
 		{"role":"user","content":"fresh","created_at":"2026-07-19T12:00:00+08:00"}
 	]`
-	rows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+	activeRows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
 		AddRow("u1", int64(1), raw, cutoff)
-	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(activeRows)
 	mock.ExpectExec("UPDATE agent_conversations").
 		WithArgs(stringArg{}, beijingTimeArg{}, "u1", int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -202,9 +204,11 @@ func TestConversationRepo_CleanupExpiredMessages_DeleteEmptyConversation(t *test
 	r, mock := newConversationRepoMock(t)
 	cutoff := time.Date(2026, 7, 19, 12, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*3600))
 	raw := `[{"role":"user","content":"old","created_at":"2026-07-19T11:59:59+08:00"}]`
-	rows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
+	activeRows := sqlmock.NewRows([]string{"channel_user_id", "conversation_id", "messages", "updated_at"}).
 		AddRow("u1", int64(1), raw, cutoff)
-	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT COALESCE\\(SUM\\(JSON_LENGTH\\(messages\\)\\), 0\\)").WithArgs(beijingTimeArg{}).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs(beijingTimeArg{}).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT channel_user_id, conversation_id, messages, updated_at").WithArgs(beijingTimeArg{}).WillReturnRows(activeRows)
 	mock.ExpectExec("DELETE FROM agent_conversations").WithArgs("u1", int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	removed, err := r.CleanupExpiredMessages(cutoff)

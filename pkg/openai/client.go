@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"miaodi-agent/internal/metrics"
 )
 
 // Client 是一个 OpenAI 兼容的 ChatCompletion 客户端
@@ -122,8 +124,10 @@ type ChatCompletionResponse struct {
 
 // CreateChatCompletion 发起 ChatCompletion 请求
 func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	span := metrics.Start("llm_chat_completion")
 	body, err := json.Marshal(req)
 	if err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
 
@@ -133,6 +137,7 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("create request failed: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -140,6 +145,7 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		span.Finish(false)
 		if c.debug {
 			log.Printf("openai request failed url=%s error=%v", url, err)
 		}
@@ -149,10 +155,12 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("read response body failed: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		span.Finish(false)
 		if c.debug {
 			log.Printf("openai error response status=%d body=%s", resp.StatusCode, string(respBody))
 		}
@@ -161,14 +169,17 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 
 	var result ChatCompletionResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("unmarshal response failed: %w", err)
 	}
 	if result.Error != nil {
+		span.Finish(false)
 		if c.debug {
 			log.Printf("openai api error code=%s type=%s message=%s", result.Error.Code, result.Error.Type, result.Error.Message)
 		}
 		return nil, fmt.Errorf("openai error: %s", result.Error.Message)
 	}
+	span.Finish(true)
 	return &result, nil
 }
 

@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"time"
+
+	"miaodi-agent/internal/metrics"
 )
 
 // MiaodiClient 喵滴 API 客户端
@@ -30,40 +32,54 @@ func NewMiaodiClientWithHTTP(httpClient *http.Client) *MiaodiClient {
 
 // Check 校验 API Key 是否有效
 func (m *MiaodiClient) Check(key string) bool {
+	span := metrics.Start("miaodi_check")
 	info, err := m.GetInfo(key)
 	if err != nil {
+		span.Finish(false)
 		return false
 	}
 	if code, ok := info["code"].(float64); ok && code == 20000 {
+		span.Finish(true)
 		return true
 	}
+	span.Finish(false)
 	return false
 }
 
 // SendEmail 发送邮箱验证码
 func (m *MiaodiClient) SendEmail(email string) (map[string]interface{}, error) {
+	span := metrics.Start("miaodi_send_email")
 	form := url.Values{}
 	form.Add("email", email)
-	return m.postForm("https://api.libv.cc/miaodi/user/open/emailVerify", form)
+	res, err := m.postForm("https://api.libv.cc/miaodi/user/open/emailVerify", form)
+	span.Finish(err == nil)
+	return res, err
 }
 
 // GetKey 通过邮箱和验证码获取 API Key
 func (m *MiaodiClient) GetKey(email, code string) (map[string]interface{}, error) {
+	span := metrics.Start("miaodi_get_key")
 	form := url.Values{}
 	form.Add("email", email)
 	form.Add("code", code)
-	return m.postForm("https://api.miaodiapp.com/api/newmail.php", form)
+	res, err := m.postForm("https://api.miaodiapp.com/api/newmail.php", form)
+	span.Finish(err == nil)
+	return res, err
 }
 
 // GetInfo 获取用户信息
 func (m *MiaodiClient) GetInfo(key string) (map[string]interface{}, error) {
+	span := metrics.Start("miaodi_get_info")
 	form := url.Values{}
 	form.Add("key", key)
-	return m.postForm("https://api.libv.cc/miaodi/user/open/info", form)
+	res, err := m.postForm("https://api.libv.cc/miaodi/user/open/info", form)
+	span.Finish(err == nil)
+	return res, err
 }
 
 // PutText 保存文本笔记
 func (m *MiaodiClient) PutText(key, book, chapter, title, content string) (map[string]interface{}, error) {
+	span := metrics.Start("miaodi_put_text")
 	form := url.Values{}
 	form.Add("key", key)
 	form.Add("book", book)
@@ -71,13 +87,17 @@ func (m *MiaodiClient) PutText(key, book, chapter, title, content string) (map[s
 	form.Add("title", title)
 	form.Add("content", content)
 	form.Add("mode", "add")
-	return m.postForm("https://api.libv.cc/miaodi/page/open/add", form)
+	res, err := m.postForm("https://api.libv.cc/miaodi/page/open/add", form)
+	span.Finish(err == nil)
+	return res, err
 }
 
 // UpImage 上传图片
 func (m *MiaodiClient) UpImage(token, filePath string) (map[string]interface{}, error) {
+	span := metrics.Start("miaodi_up_image")
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("读取文件失败: %w", err)
 	}
 
@@ -87,28 +107,35 @@ func (m *MiaodiClient) UpImage(token, filePath string) (map[string]interface{}, 
 
 	part, err := writer.CreateFormFile("image", fmt.Sprintf("%d.jpg", time.Now().Unix()))
 	if err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("创建文件字段失败: %w", err)
 	}
 	if _, err = part.Write(fileContent); err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("写入文件内容失败: %w", err)
 	}
 	if err = writer.Close(); err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("关闭写入器失败: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", "https://picture.miaodiapp.com/api/upload", body)
 	if err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := m.client.Do(req)
 	if err != nil {
+		span.Finish(false)
 		return nil, fmt.Errorf("请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
-	return decodeResponse(resp)
+	res, err := decodeResponse(resp)
+	span.Finish(err == nil)
+	return res, err
 }
 
 func (m *MiaodiClient) postForm(url string, form url.Values) (map[string]interface{}, error) {

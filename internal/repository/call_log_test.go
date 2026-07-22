@@ -207,12 +207,25 @@ func TestCallLogRepo_RecentByUser_OverLimit(t *testing.T) {
 	}
 }
 
+func TestCallLogRepo_CleanupOlderThan(t *testing.T) {
+	r, mock := newCallLogRepoMock(t)
+	mock.ExpectExec("DELETE FROM api_call_log WHERE created_at < ?").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 5))
+
+	deleted, err := r.CleanupOlderThan(30)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deleted != 5 {
+		t.Fatalf("expected 5 deleted, got %d", deleted)
+	}
+}
+
 func TestCallLogRepo_ByDate(t *testing.T) {
 	r, mock := newCallLogRepoMock(t)
 	rows := sqlmock.NewRows([]string{"action", "created_at"}).
 		AddRow("put_text", time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC))
-	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND DATE\(created_at\) = \?`).
-		WithArgs("u1", "2026-06-30").WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT action, created_at FROM api_call_log WHERE channel_user_id = \? AND created_at >= \? AND created_at < \?`).
+		WithArgs("u1", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(rows)
 
 	results, err := r.ByDate("u1", "2026-06-30")
 	if err != nil {
