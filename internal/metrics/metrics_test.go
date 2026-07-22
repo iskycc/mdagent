@@ -93,6 +93,7 @@ type fakeStore struct {
 	mu        sync.Mutex
 	samples   []Sample
 	saveErr   error
+	loadErr   error
 	saveCalls int
 }
 
@@ -110,6 +111,9 @@ func (f *fakeStore) Save(samples []Sample) error {
 func (f *fakeStore) LoadRecent(limit int) ([]Sample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.loadErr != nil {
+		return nil, f.loadErr
+	}
 	if limit > len(f.samples) {
 		limit = len(f.samples)
 	}
@@ -195,8 +199,7 @@ func TestFlushFailureKeepsPendingSamples(t *testing.T) {
 
 func TestPeriodicFlush(t *testing.T) {
 	fs := &fakeStore{}
-	r := NewRecorderWithStore(fs)
-	r.flushInterval = 50 * time.Millisecond
+	r := NewRecorderWithStoreAndOptions(fs, 50*time.Millisecond, 1000)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r.Run(ctx)
@@ -234,5 +237,72 @@ func TestGlobalInitAndFlush(t *testing.T) {
 	fs.mu.Unlock()
 	if n != 1 {
 		t.Fatalf("expected 1 global sample saved, got %d", n)
+	}
+}
+
+func TestStopTwiceDoesNotPanic(t *testing.T) {
+	fs := &fakeStore{}
+	r := NewRecorderWithStore(fs)
+	r.Stop()
+	r.Stop() // 重复调用不应 panic
+}
+
+func TestConcurrentFlush(t *testing.T) {
+	fs := &fakeStore{}
+	r := NewRecorderWithStore(fs)
+
+	for i := 0; i < 100; i++ {
+		r.Record("api", time.Duration(i)*time.Millisecond, true)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := r.Flush(); err != nil {
+				t.Errorf("flush failed: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	fs.mu.Lock()
+	n := len(fs.samples)
+	calls := fs.saveCalls
+	fs.mu.Unlock()
+	if n != 100 {
+		t.Fatalf("expected 100 samples saved, got %d", n)
+	}
+	// 序列化后，空 pending 的 flush 不应触发 Save，因此调用次数应 >=1 且 <=10。
+	if calls < 1 || calls > 10 {
+		t.Fatalf("expected 1..10 save calls, got %d", calls)
+	}
+}
+
+func TestEmptyFlushReturnsNil(t *testing.T) {
+	fs := &fakeStore{}
+	r := NewRecorderWithStore(fs)
+	if err := r.Flush(); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+
+	fs.mu.Lock()
+	n := len(fs.samples)
+	calls := fs.saveCalls
+	fs.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("expected 0 saved samples, got %d", n)
+	}
+	if calls != 0 {
+		t.Fatalf("expected 0 save calls, got %d", calls)
+	}
+}
+
+func TestInitLoadError(t *testing.T) {
+	fs := &fakeStore{loadErr: errors.New("load failed")}
+	r := NewRecorderWithStore(fs)
+	if err := r.Init(); err == nil {
+		t.Fatalf("expected load error")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -94,25 +95,36 @@ type Recorder struct {
 	store         Store
 	pendingMu     sync.Mutex
 	pending       []Sample
-	flushInterval time.Duration
-	maxPending    int
+	flushInterval time.Duration // 仅在构造函数中设置，构造后不可变
+	maxPending    int           // 仅在构造函数中设置，构造后不可变
 	stopCh        chan struct{}
+	stopOnce      sync.Once
+	flushMu       sync.Mutex
+	running       atomic.Bool
 }
 
 // NewRecorder 创建一个新的 Recorder。
 func NewRecorder() *Recorder {
-	return &Recorder{
-		metrics:       make(map[string]*metric),
-		flushInterval: 30 * time.Second,
-		maxPending:    1000,
-	}
+	return NewRecorderWithStoreAndOptions(nil, 30*time.Second, 1000)
 }
 
 // NewRecorderWithStore 创建一个有持久化能力的 Recorder。
 func NewRecorderWithStore(store Store) *Recorder {
-	r := NewRecorder()
-	r.store = store
-	r.stopCh = make(chan struct{})
+	return NewRecorderWithStoreAndOptions(store, 30*time.Second, 1000)
+}
+
+// NewRecorderWithStoreAndOptions 创建一个有持久化能力并可自定义刷新参数的 Recorder。
+// flushInterval 与 maxPending 仅在构造时设置，构造后不可修改。
+func NewRecorderWithStoreAndOptions(store Store, flushInterval time.Duration, maxPending int) *Recorder {
+	r := &Recorder{
+		metrics:       make(map[string]*metric),
+		flushInterval: flushInterval,
+		maxPending:    maxPending,
+		store:         store,
+	}
+	if store != nil {
+		r.stopCh = make(chan struct{})
+	}
 	return r
 }
 
@@ -128,6 +140,8 @@ func (r *Recorder) get(name string) *metric {
 }
 
 // Record 记录一次调用耗时与结果。
+// 当 pending 达到 maxPending 时，会同步触发 Flush；Flush 失败时错误会被静默忽略
+// （本包不依赖外部 logger），调用方如关注持久化结果可主动调用 Flush()。
 func (r *Recorder) Record(name string, d time.Duration, success bool) {
 	r.get(name).record(d, success)
 
@@ -168,11 +182,16 @@ func (r *Recorder) Init() error {
 }
 
 // Run 启动后台 goroutine，按 flushInterval 周期刷新 pending 样本到 Store。
+// 多次调用 Run() 只会启动一个刷新 goroutine；当 store 为 nil 时不执行任何操作。
 func (r *Recorder) Run(ctx context.Context) {
 	if r.store == nil {
 		return
 	}
+	if !r.running.CompareAndSwap(false, true) {
+		return
+	}
 	go func() {
+		defer r.running.Store(false)
 		ticker := time.NewTicker(r.flushInterval)
 		defer ticker.Stop()
 		for {
@@ -192,6 +211,9 @@ func (r *Recorder) Run(ctx context.Context) {
 
 // Flush 将 pending 中的样本持久化到 Store；失败时将样本重新放回 pending。
 func (r *Recorder) Flush() error {
+	r.flushMu.Lock()
+	defer r.flushMu.Unlock()
+
 	if r.store == nil {
 		return nil
 	}
@@ -208,10 +230,10 @@ func (r *Recorder) Flush() error {
 
 	if err := r.store.Save(toSave); err != nil {
 		r.pendingMu.Lock()
-		// 将失败样本重新放到队列头部（最老的位置），保留原有顺序。
+		// 失败样本放到队列头部，溢出时丢弃 newest samples。
 		r.pending = append(toSave, r.pending...)
 		if len(r.pending) > r.maxPending {
-			r.pending = r.pending[len(r.pending)-r.maxPending:]
+			r.pending = r.pending[:r.maxPending]
 		}
 		r.pendingMu.Unlock()
 		return err
@@ -219,11 +241,13 @@ func (r *Recorder) Flush() error {
 	return nil
 }
 
-// Stop 通知后台刷新 goroutine 退出。
+// Stop 通知后台刷新 goroutine 退出；重复调用不会 panic。
 func (r *Recorder) Stop() {
-	if r.stopCh != nil {
-		close(r.stopCh)
-	}
+	r.stopOnce.Do(func() {
+		if r.stopCh != nil {
+			close(r.stopCh)
+		}
+	})
 }
 
 // Start 开始一个计时 Span，返回后调用者需调用 Finish。
