@@ -213,27 +213,6 @@ func ToolDefinitions() []openai.ToolDefinition {
 			{
 				Type: "function",
 				Function: openai.FunctionDef{
-					Name:        "save_image_note",
-					Description: "把图片链接记录到待上传队列，等待定时任务扫描后上传到喵滴。",
-					Parameters: map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"image_url": map[string]interface{}{
-								"type":        "string",
-								"description": "图片 URL",
-							},
-							"title": map[string]interface{}{
-								"type":        "string",
-								"description": "可选标题",
-							},
-						},
-						"required": []string{"image_url"},
-					},
-				},
-			},
-			{
-				Type: "function",
-				Function: openai.FunctionDef{
 					Name:        "reset_conversation",
 					Description: "清空当前会话历史。当用户想重置对话、清空上下文、忘记刚才的对话时调用。",
 					Parameters: map[string]interface{}{
@@ -375,7 +354,7 @@ func (e *ToolExecutor) bindMiaodiKey(user *model.User, channelUserID, arguments 
 		debuglog.Printf("bind key cache set failed user=%s error=%v", channelUserID, err)
 	}
 	e.recordCall(channelUserID, args.Key, "bind_key")
-	return "绑定成功，你现在可以保存笔记和图片了"
+	return "绑定成功，你现在可以保存文本笔记了"
 }
 
 func (e *ToolExecutor) sendMiaodiEmailCode(user *model.User, channelUserID, arguments string) string {
@@ -456,7 +435,7 @@ func (e *ToolExecutor) bindMiaodiByEmailCode(user *model.User, channelUserID, ar
 		debuglog.Printf("bind by email cache set failed user=%s error=%v", channelUserID, err)
 	}
 	e.recordCall(channelUserID, key, "get_key")
-	return "绑定成功，你现在可以保存笔记和图片了"
+	return "绑定成功，你现在可以保存文本笔记了"
 }
 
 func (e *ToolExecutor) setSavePath(user *model.User, channelUserID, arguments string) string {
@@ -567,28 +546,7 @@ func (e *ToolExecutor) saveTextNote(user *model.User, channelUserID, arguments s
 }
 
 func (e *ToolExecutor) saveImageNote(user *model.User, channelUserID, arguments string) string {
-	if user.Status != userStatusBound || user.APIKey == "" {
-		return "尚未绑定喵滴 Key，请先绑定"
-	}
-	var args struct {
-		ImageURL string `json:"image_url"`
-		Title    string `json:"title"`
-	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "参数解析失败"
-	}
-	if args.ImageURL == "" {
-		return "image_url 不能为空"
-	}
-	title := args.Title
-	if title == "" {
-		title = getNowTitle(user.Title)
-	}
-	if err := e.pendingRepo.Insert(user.APIKey, args.ImageURL, user.Book, user.Chara, title); err != nil {
-		return fmt.Sprintf("图片落库失败：%v", err)
-	}
-	e.recordCall(channelUserID, user.APIKey, "save_image_pending")
-	return fmt.Sprintf("图片已加入待上传队列：%s，等待后台扫描上传到喵滴", args.ImageURL)
+	return "当前不支持图片保存或上传。请发送需要保存的文字内容。"
 }
 
 func (e *ToolExecutor) resetConversation(user *model.User, channelUserID string, conversationID int64, arguments string) string {
@@ -612,7 +570,6 @@ func (e *ToolExecutor) showHelp() string {
 - 获取喵滴年度报告链接
 - 设置保存路径（书/章/标题）
 - 保存文本笔记
-- 保存图片到待上传队列
 - 查看当前绑定状态和路径
 - 查询最近保存的笔记
 - 按日期查询笔记

@@ -65,7 +65,7 @@ func TestToolExecutor_bindMiaodiKey_Success(t *testing.T) {
 
 	user := &model.User{ChannelUserID: "u1", Status: "unbound"}
 	res := exec.Execute(user, "u1", 1, "bind_miaodi_key", `{"key":"key1"}`)
-	if res != "绑定成功，你现在可以保存笔记和图片了" {
+	if res != "绑定成功，你现在可以保存文本笔记了" {
 		t.Errorf("unexpected result: %s", res)
 	}
 }
@@ -110,7 +110,7 @@ func TestToolExecutor_bindMiaodiByEmailCode_Success(t *testing.T) {
 
 	user := &model.User{ChannelUserID: "u1", Email: "u@example.com", Status: userStatusWaitingEmailCode}
 	res := exec.Execute(user, "u1", 1, "bind_miaodi_by_email_code", `{"code":"123456"}`)
-	if res != "绑定成功，你现在可以保存笔记和图片了" {
+	if res != "绑定成功，你现在可以保存文本笔记了" {
 		t.Errorf("unexpected result: %s", res)
 	}
 	if user.APIKey != "key-from-email" || user.Status != userStatusBound {
@@ -215,14 +215,19 @@ func TestToolExecutor_saveTextNote_NotBound(t *testing.T) {
 }
 
 func TestToolExecutor_saveImageNote(t *testing.T) {
-	exec, mock := newToolExecutorMock(t)
-	mock.ExpectExec("INSERT INTO pending_images").WithArgs("key1", "http://img", "b", "c", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("INSERT INTO api_call_log").WithArgs("u1", sqlmock.AnyArg(), "miaodi", "save_image_pending", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-
+	exec, _ := newToolExecutorMock(t)
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_image_note", `{"image_url":"http://img"}`)
-	if res == "" {
-		t.Error("expected result")
+	if res != "当前不支持图片保存或上传。请发送需要保存的文字内容。" {
+		t.Errorf("unexpected result: %s", res)
+	}
+}
+
+func TestToolDefinitions_DoNotExposeImageTool(t *testing.T) {
+	for _, tool := range ToolDefinitions() {
+		if tool.Function.Name == "save_image_note" {
+			t.Fatal("save_image_note should not be exposed to llm")
+		}
 	}
 }
 
@@ -280,11 +285,11 @@ func TestToolExecutor_saveTextNote_PutError(t *testing.T) {
 func TestToolExecutor_saveImageNote_InvalidArgs(t *testing.T) {
 	exec, _ := newToolExecutorMock(t)
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1"}
-	if res := exec.Execute(user, "u1", 1, "save_image_note", `invalid`); res == "" {
-		t.Error("expected error result")
+	if res := exec.Execute(user, "u1", 1, "save_image_note", `invalid`); res != "当前不支持图片保存或上传。请发送需要保存的文字内容。" {
+		t.Errorf("unexpected result: %s", res)
 	}
-	if res := exec.Execute(user, "u1", 1, "save_image_note", `{"image_url":""}`); res == "" {
-		t.Error("expected empty url error")
+	if res := exec.Execute(user, "u1", 1, "save_image_note", `{"image_url":""}`); res != "当前不支持图片保存或上传。请发送需要保存的文字内容。" {
+		t.Errorf("unexpected result: %s", res)
 	}
 }
 
@@ -292,7 +297,7 @@ func TestToolExecutor_saveImageNote_NotBound(t *testing.T) {
 	exec, _ := newToolExecutorMock(t)
 	user := &model.User{ChannelUserID: "u1", Status: "unbound"}
 	res := exec.Execute(user, "u1", 1, "save_image_note", `{"image_url":"http://img"}`)
-	if res != "尚未绑定喵滴 Key，请先绑定" {
+	if res != "当前不支持图片保存或上传。请发送需要保存的文字内容。" {
 		t.Errorf("unexpected result: %s", res)
 	}
 }
@@ -336,12 +341,11 @@ func TestToolExecutor_setSavePath_DBError(t *testing.T) {
 }
 
 func TestToolExecutor_saveImageNote_DBError(t *testing.T) {
-	exec, mock := newToolExecutorMock(t)
-	mock.ExpectExec("INSERT INTO pending_images").WithArgs("key1", "http://img", "b", "c", sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnError(sqlmock.ErrCancelled)
+	exec, _ := newToolExecutorMock(t)
 	user := &model.User{ChannelUserID: "u1", Status: "bound", APIKey: "key1", Book: "b", Chara: "c"}
 	res := exec.Execute(user, "u1", 1, "save_image_note", `{"image_url":"http://img"}`)
-	if res == "" {
-		t.Error("expected error result")
+	if res != "当前不支持图片保存或上传。请发送需要保存的文字内容。" {
+		t.Errorf("unexpected result: %s", res)
 	}
 }
 

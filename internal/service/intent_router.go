@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"miaodi-agent/internal/model"
 	"miaodi-agent/internal/timeutil"
@@ -20,12 +21,12 @@ var (
 	alphaCodePattern  = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 
 	// 以下正则原先在函数内部每次调用都重新编译，提到包级变量避免重复开销。
-	dateDeltaPattern       = regexp.MustCompile(`(\d+)\s*天\s*(后|前)`)
-	chinesePathPattern     = regexp.MustCompile(`《([^》]+)》\s*第?\s*([^章《》]+)\s*章(?:节)?\s*《([^》]+)》`)
-	chinesePathAltPattern  = regexp.MustCompile(`书本?[:：]\s*([^,，\s]+).*章节?[:：]\s*([^,，\s]+)(?:.*标题[:：]\s*([^,，\s]+))?`)
+	dateDeltaPattern      = regexp.MustCompile(`(\d+)\s*天\s*(后|前)`)
+	chinesePathPattern    = regexp.MustCompile(`《([^》]+)》\s*第?\s*([^章《》]+)\s*章(?:节)?\s*《([^》]+)》`)
+	chinesePathAltPattern = regexp.MustCompile(`书本?[:：]\s*([^,，\s]+).*章节?[:：]\s*([^,，\s]+)(?:.*标题[:：]\s*([^,，\s]+))?`)
 )
 
-// IntentRouter 为小模型兜底处理高置信度意图。
+// IntentRouter 在 LLM 输入预算不足时兜底处理高置信度意图。
 type IntentRouter struct {
 	toolExec ToolRunner
 }
@@ -34,7 +35,7 @@ func NewIntentRouter(toolExec ToolRunner) *IntentRouter {
 	return &IntentRouter{toolExec: toolExec}
 }
 
-// Route 尝试在本地处理明确意图，返回 handled=false 时继续走 LLM。
+// Route 尝试在本地处理明确意图。Agent 只应在最新消息无法进入 LLM 上下文时调用它。
 func (r *IntentRouter) Route(user *model.User, channelUserID string, conversationID int64, text string) (string, bool) {
 	if r == nil || r.toolExec == nil {
 		return "", false
@@ -488,21 +489,56 @@ func parseImageIntent(original, normalized string) (map[string]string, bool) {
 }
 
 func parseSaveTextIntent(original, normalized string) (map[string]string, bool) {
-	if strings.Contains(normalized, "怎么保存") || strings.Contains(normalized, "如何保存") {
-		return nil, false
-	}
 	original = strings.TrimPrefix(strings.TrimSpace(original), "/")
-	for _, keyword := range []string{"帮我保存", "保存", "记一下"} {
+	for _, keyword := range []string{"帮我保存", "请保存", "保存", "记一下"} {
 		if !strings.HasPrefix(normalized, strings.ToLower(keyword)) {
 			continue
 		}
-		content := strings.TrimSpace(strings.TrimPrefix(original, keyword))
-		content = strings.TrimLeft(content, " :：")
+		rest := strings.TrimPrefix(original, keyword)
+		hasStrongDelimiter := startsWithStrongDelimiter(rest)
+		if keyword == "保存" && !startsWithSaveDelimiter(rest) {
+			return nil, false
+		}
+		content := strings.TrimSpace(strings.TrimLeft(rest, " :："))
 		if content != "" {
+			if !hasStrongDelimiter && looksLikeQuestion(content) {
+				return nil, false
+			}
 			return map[string]string{"content": content}, true
 		}
 	}
 	return nil, false
+}
+
+func startsWithSaveDelimiter(text string) bool {
+	for _, r := range text {
+		return unicode.IsSpace(r) || strings.ContainsRune(":：", r)
+	}
+	return false
+}
+
+func startsWithStrongDelimiter(text string) bool {
+	text = strings.TrimLeftFunc(text, unicode.IsSpace)
+	for _, r := range text {
+		return strings.ContainsRune(":：", r)
+	}
+	return false
+}
+
+func looksLikeQuestion(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if strings.ContainsAny(text, "?？") {
+		return true
+	}
+	for _, hint := range []string{
+		"是什么", "什么逻辑", "什么意思", "怎么", "如何", "为什么", "为啥",
+		"吗", "是否", "能不能", "可不可以", "有没有",
+	} {
+		if strings.Contains(text, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 func toJSONString(v interface{}) string {

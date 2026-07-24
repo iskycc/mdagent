@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-这是一个 Go 实现的喵滴 AI Agent 服务，用于对接传送鸽 Bot 回调。服务收到用户消息后，先尝试本地意图路由，命中明确命令时直接执行工具；未命中时调用 OpenAI-compatible Chat Completions API，通过 tool-call 决定后续动作。
+这是一个 Go 实现的喵滴 AI Agent 服务，用于对接传送鸽 Bot 回调。服务收到用户消息后，正常情况下调用 OpenAI-compatible Chat Completions API，通过 tool-call 决定后续动作；只有当用户最新一条消息已经无法放入 LLM 输入预算时，才启用本地 `IntentRouter` 作为兜底。
 
 当前主要能力：
 
@@ -26,7 +26,7 @@
 - `internal/handler/callback.go`：传送鸽 webhook 入口。
 - `internal/handler/stats.go`：统计页面和统计 JSON API。
 - `internal/service/agent.go`：Agent 主流程，负责加载用户、维护会话历史、调用 LLM、执行工具、追加上下文。
-- `internal/service/intent_router.go`：本地高置信度意图识别。
+- `internal/service/intent_router.go`：超长消息场景下的本地高置信度意图兜底。
 - `internal/service/miaodi_tool.go`：喵滴业务工具执行器。
 - `internal/service/common_tools.go`：通用工具，如时间、计算、随机、文本统计、token 统计。
 - `internal/service/token_budget.go`：LLM 请求前的 token 预算和历史裁剪。
@@ -78,13 +78,14 @@ Webhook 主流程：
 
 1. `handler.CallbackHandler.handleCallback` 读取并解析传送鸽 payload。
 2. `service.Agent.ProcessMessage` 根据 `channelUserID` 加载用户。
-3. 先走 `IntentRouter.Route`。
-4. 本地路由未命中时，把用户消息加入历史。
-5. 构造 system prompt、历史消息和 tool definitions。
-6. 调用 LLM。
-7. 如果模型返回 tool calls，执行 `ToolExecutor.Execute`。
-8. 将 assistant/tool 消息追加到历史。
-9. 返回最终回复。
+3. 构造 system prompt 和 tool definitions，并检查最新用户消息是否能放入输入预算。
+4. 如果最新消息已经超出预算，才尝试 `IntentRouter.Route`；命中则直接执行工具，未命中则返回过长提示。
+5. 最新消息可放入预算时，把用户消息加入历史。
+6. 读取 24 小时内历史并按 token 预算裁剪旧消息。
+7. 调用 LLM。
+8. 如果模型返回 tool calls，执行 `ToolExecutor.Execute`。
+9. 将 assistant/tool 消息追加到历史。
+10. 返回最终回复。
 
 缓存和持久化现状：
 

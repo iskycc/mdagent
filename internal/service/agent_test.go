@@ -20,8 +20,8 @@ func (nopPersistQueue) EnqueueConv(context.Context, string, int64, []repository.
 	return true
 }
 func (nopPersistQueue) EnqueueLog(context.Context, string, string, string, string) bool { return true }
-func (nopPersistQueue) Run(context.Context)                                                    {}
-func (nopPersistQueue) Flush(context.Context) error                                            { return nil }
+func (nopPersistQueue) Run(context.Context)                                             {}
+func (nopPersistQueue) Flush(context.Context) error                                     { return nil }
 
 func newTestAgent(llm LLMClient, userStore UserStore, convStore ConversationStore, toolRunner ToolRunner) *Agent {
 	return NewAgent(llm, "model", userStore, convStore, toolRunner, cache.NopCache{}, nopPersistQueue{})
@@ -187,12 +187,35 @@ func TestAgent_ProcessMessage_FinalReply(t *testing.T) {
 	}
 }
 
-func TestAgent_ProcessMessage_LocalIntentBypassesLLM(t *testing.T) {
+func TestAgent_ProcessMessage_NormalIntentGoesThroughLLM(t *testing.T) {
+	llm := &fakeLLM{responses: []*openai.ChatCompletionResponse{makeTextResponse("LLM 帮助")}}
+	runner := &fakeToolRunner{result: "本地帮助"}
+	payload := newTestPayload()
+	payload.Message.Content = "帮助"
+	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
+
+	reply := agent.ProcessMessage(context.Background(), payload)
+
+	if reply != "LLM 帮助" {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+	if llm.callCount != 1 {
+		t.Errorf("expected normal intent to go through llm, got %d calls", llm.callCount)
+	}
+	if runner.executedName != "" {
+		t.Errorf("expected local runner to be skipped, got %s", runner.executedName)
+	}
+}
+
+func TestAgent_ProcessMessage_IntentRouterFallbackWhenLatestMessageTooLarge(t *testing.T) {
 	llm := &fakeLLM{}
 	runner := &fakeToolRunner{result: "帮助内容"}
 	payload := newTestPayload()
 	payload.Message.Content = "帮助"
-	agent := newTestAgent(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner)
+	agent := newTestAgentWithOptions(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner, AgentOptions{
+		ModelMaxTokens:  256,
+		MaxOutputTokens: 128,
+	})
 
 	reply := agent.ProcessMessage(context.Background(), payload)
 
@@ -200,10 +223,33 @@ func TestAgent_ProcessMessage_LocalIntentBypassesLLM(t *testing.T) {
 		t.Errorf("unexpected reply: %s", reply)
 	}
 	if llm.callCount != 0 {
-		t.Errorf("expected local intent to bypass llm, got %d calls", llm.callCount)
+		t.Errorf("expected fallback intent to skip llm, got %d calls", llm.callCount)
 	}
 	if runner.executedName != "show_help" {
 		t.Errorf("expected show_help, got %s", runner.executedName)
+	}
+}
+
+func TestAgent_ProcessMessage_TooLargeUnknownMessageReturnsError(t *testing.T) {
+	llm := &fakeLLM{}
+	runner := &fakeToolRunner{result: "ok"}
+	payload := newTestPayload()
+	payload.Message.Content = strings.Repeat("这是一段很长但没有本地工具意图的内容", 200)
+	agent := newTestAgentWithOptions(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, &fakeConversationStore{}, runner, AgentOptions{
+		ModelMaxTokens:  256,
+		MaxOutputTokens: 128,
+	})
+
+	reply := agent.ProcessMessage(context.Background(), payload)
+
+	if reply != "消息过长，无法进入 AI 上下文，请缩短后再试" {
+		t.Errorf("unexpected reply: %s", reply)
+	}
+	if llm.callCount != 0 {
+		t.Errorf("expected too large message to skip llm, got %d calls", llm.callCount)
+	}
+	if runner.executedName != "" {
+		t.Errorf("expected no local tool for unknown message, got %s", runner.executedName)
 	}
 }
 
@@ -215,7 +261,7 @@ func TestAgent_ProcessMessage_UsesConfiguredTokenBudget(t *testing.T) {
 		},
 	}
 	agent := newTestAgentWithOptions(llm, &fakeUserStore{user: &model.User{ChannelUserID: "u1"}}, store, &fakeToolRunner{}, AgentOptions{
-		ModelMaxTokens:  1200,
+		ModelMaxTokens:  8192,
 		MaxOutputTokens: 128,
 	})
 
@@ -227,8 +273,10 @@ func TestAgent_ProcessMessage_UsesConfiguredTokenBudget(t *testing.T) {
 	if llm.lastReq.MaxTokens != 128 {
 		t.Errorf("expected max_tokens 128, got %d", llm.lastReq.MaxTokens)
 	}
-	if got := estimateBlockTokens(llm.lastReq.Messages); got >= 1200 {
-		t.Errorf("expected trimmed prompt below model limit, got %d tokens", got)
+	tokenizer := newTokenCounter("model")
+	inputBudget := 8192 - 128 - tokenizer.ToolsTokens(toToolDefinitions()) - tokenSafetyMargin
+	if got := tokenizer.MessagesTokens(llm.lastReq.Messages); got > inputBudget {
+		t.Errorf("expected trimmed prompt below input budget %d, got %d tokens", inputBudget, got)
 	}
 }
 

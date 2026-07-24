@@ -24,10 +24,10 @@ const (
 
 // AgentOptions 控制 Agent 与模型交互时的资源预算与幂等去重行为。
 type AgentOptions struct {
-	ModelMaxTokens        int
-	MaxOutputTokens       int
-	ProcessedMessageRepo  ProcessedMessageChecker
-	ProcessingTimeout     time.Duration
+	ModelMaxTokens       int
+	MaxOutputTokens      int
+	ProcessedMessageRepo ProcessedMessageChecker
+	ProcessingTimeout    time.Duration
 }
 
 // ProcessedMessageChecker 是消息幂等去重接口。
@@ -39,20 +39,20 @@ type ProcessedMessageChecker interface {
 
 // Agent 是 AI Agent 核心服务
 type Agent struct {
-	llm                LLMClient
-	model              string
-	userRepo           UserStore
-	convRepo           ConversationStore
-	toolExec           ToolRunner
-	intentRouter       *IntentRouter
-	modelMaxTokens     int
-	maxOutputTokens    int
-	cache              cache.Cache
-	persistQueue       PersistQueue
-	systemPromptCache  *systemPromptCache
-	llmCallRepo        LLMCallLogger
-	processedMsgRepo   ProcessedMessageChecker
-	processingTimeout  time.Duration
+	llm               LLMClient
+	model             string
+	userRepo          UserStore
+	convRepo          ConversationStore
+	toolExec          ToolRunner
+	intentRouter      *IntentRouter
+	modelMaxTokens    int
+	maxOutputTokens   int
+	cache             cache.Cache
+	persistQueue      PersistQueue
+	systemPromptCache *systemPromptCache
+	llmCallRepo       LLMCallLogger
+	processedMsgRepo  ProcessedMessageChecker
+	processingTimeout time.Duration
 }
 
 // systemPromptCache 按用户状态缓存 system prompt，减少每轮请求时的重复格式化。
@@ -184,9 +184,19 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 	}
 	debuglog.Printf("agent user loaded user=%s status=%s book=%q chapter=%q title=%q", channelUserID, user.Status, user.Book, user.Chara, user.Title)
 
-	if reply, handled := a.intentRouter.Route(user, channelUserID, conversationID, payload.Message.Content); handled {
-		debuglog.Printf("agent local intent handled user=%s conversation=%d reply=%q", channelUserID, conversationID, reply)
-		return a.debugReturn("agent local intent response", reply)
+	systemPrompt, _ := a.systemPromptCache.get(user)
+	if systemPrompt == "" {
+		systemPrompt = buildSystemPrompt(user)
+		a.systemPromptCache.set(user, systemPrompt)
+	}
+	tools := toToolDefinitions()
+	if a.latestMessageExceedsTokenBudget(systemPrompt, payload.Message.Content, tools) {
+		debuglog.Printf("agent latest message exceeds token budget user=%s conversation=%d", channelUserID, conversationID)
+		if reply, handled := a.intentRouter.Route(user, channelUserID, conversationID, payload.Message.Content); handled {
+			debuglog.Printf("agent fallback intent handled user=%s conversation=%d reply=%q", channelUserID, conversationID, reply)
+			return a.debugReturn("agent fallback intent response", reply)
+		}
+		return a.debugReturn("agent latest message too long", "消息过长，无法进入 AI 上下文，请缩短后再试")
 	}
 
 	// 追加用户消息到历史
@@ -224,18 +234,12 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 	history := repository.StoredToChatMessages(historyStored)
 	debuglog.Printf("agent history loaded user=%s conversation=%d messages=%d", channelUserID, conversationID, len(history))
 
-	systemPrompt, _ := a.systemPromptCache.get(user)
-	if systemPrompt == "" {
-		systemPrompt = buildSystemPrompt(user)
-		a.systemPromptCache.set(user, systemPrompt)
-	}
 	systemMsg := openai.ChatMessage{
 		Role:    "system",
 		Content: systemPrompt,
 	}
 	messages := append([]openai.ChatMessage{systemMsg}, history...)
 
-	tools := toToolDefinitions()
 	for i := 0; i < defaultMaxToolRounds; i++ {
 		select {
 		case <-ctx.Done():
@@ -350,6 +354,19 @@ func (a *Agent) ProcessMessage(ctx context.Context, payload *model.CallbackPaylo
 	return a.debugReturn("agent max tool rounds exceeded", "工具调用轮数超过限制，请简化请求")
 }
 
+func (a *Agent) latestMessageExceedsTokenBudget(systemPrompt, content string, tools []openai.ToolDefinition) bool {
+	tokenizer := newTokenCounter(a.model)
+	inputBudget := a.modelMaxTokens - a.maxOutputTokens - tokenizer.ToolsTokens(tools) - tokenSafetyMargin
+	if inputBudget <= 0 {
+		return true
+	}
+	messages := []openai.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: content},
+	}
+	return tokenizer.MessagesTokens(messages) > inputBudget
+}
+
 func (a *Agent) debugReturn(reason, reply string) string {
 	debuglog.Printf("%s reply=%q", reason, reply)
 	return reply
@@ -408,7 +425,7 @@ func buildSystemPrompt(user *model.User) string {
 - 年度报告/报告地址 -> get_miaodi_annual_report
 - 解除绑定/解绑 -> unbind_miaodi_key
 - 保存文字 -> save_text_note
-- 保存图片链接 -> save_image_note，只入待上传队列
+- 当前不支持保存或上传图片；不要声称可以保存图片链接，不要提待上传队列
 - 清空/重置/忘记对话 -> reset_conversation
 - 帮助/怎么用/能做什么 -> show_help
 - 最近保存了什么 -> list_recent_notes

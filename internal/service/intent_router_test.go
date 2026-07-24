@@ -247,9 +247,9 @@ func TestIntentRouter_LengthLimits(t *testing.T) {
 
 func TestIntentRouter_ResetBranches(t *testing.T) {
 	tests := map[string]string{
-		"reset":          "清空对话",
-		"restart":        "重新开始",
-		"forget":         "忘记刚才",
+		"reset":   "清空对话",
+		"restart": "重新开始",
+		"forget":  "忘记刚才",
 	}
 	for name, text := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -313,8 +313,8 @@ func TestIntentRouter_DateCalculateBranches(t *testing.T) {
 
 func TestIntentRouter_BindBranches(t *testing.T) {
 	tests := []struct {
-		text     string
-		wantKey  string
+		text    string
+		wantKey string
 	}{
 		{"绑定 mykey", "mykey"},
 		{"/bind key: sk-test", "sk-test"},
@@ -383,6 +383,42 @@ func TestIntentRouter_SaveTextNoContent(t *testing.T) {
 	_, handled = router.Route(&model.User{}, "u1", 100, "今天天气真好")
 	if handled {
 		t.Fatal("expected non-save text to be skipped")
+	}
+}
+
+func TestIntentRouter_SaveTextQuestionSkipsLocalRoute(t *testing.T) {
+	tests := []string{
+		"保存图片链接是什么逻辑",
+		"保存 图片链接是什么逻辑",
+		"保存图片有什么用？",
+	}
+	for _, text := range tests {
+		t.Run(text, func(t *testing.T) {
+			runner := &fakeToolRunner{result: "ok"}
+			router := NewIntentRouter(runner)
+			_, handled := router.Route(&model.User{}, "u1", 100, text)
+			if handled {
+				t.Fatalf("expected %q to go through llm, got %s", text, runner.executedName)
+			}
+		})
+	}
+}
+
+func TestIntentRouter_SaveTextExplicitQuestionContent(t *testing.T) {
+	runner := &fakeToolRunner{result: "ok"}
+	router := NewIntentRouter(runner)
+	_, handled := router.Route(&model.User{}, "u1", 100, "保存 ：图片链接是什么逻辑")
+	if !handled || runner.executedName != "save_text_note" {
+		t.Fatalf("expected explicit save text, got %s handled=%v", runner.executedName, handled)
+	}
+}
+
+func TestIntentRouter_SaveTextPlainStatementStillRoutes(t *testing.T) {
+	runner := &fakeToolRunner{result: "ok"}
+	router := NewIntentRouter(runner)
+	_, handled := router.Route(&model.User{}, "u1", 100, "保存 今天这么开心")
+	if !handled || runner.executedName != "save_text_note" {
+		t.Fatalf("expected plain save text, got %s handled=%v", runner.executedName, handled)
 	}
 }
 

@@ -1,6 +1,6 @@
 # 喵滴 AI Agent（传送鸽 Bot）
 
-这是一个对接 传送鸽 Bot 回调与喵滴 API 的 AI Agent。收到用户消息后，它调用标准 OpenAI 格式的大模型 API（如 DeepSeek）进行 tool-call 决策，自动完成喵滴 Key 绑定、邮箱验证码绑定、保存文本笔记、图片落库等操作。
+这是一个对接 传送鸽 Bot 回调与喵滴 API 的 AI Agent。收到用户消息后，它调用标准 OpenAI 格式的大模型 API（如 DeepSeek）进行 tool-call 决策，自动完成喵滴 Key 绑定、邮箱验证码绑定、保存文本笔记等操作。
 
 ## 目录
 
@@ -34,7 +34,7 @@
 | `MAX_CALLBACK_BODY_BYTES` | 回调请求体最大字节数 | `1048576` |
 | `MIAODI_API_BASE_URL` | 喵滴 API 基础地址（Check/SendEmail/GetInfo/PutText） | `https://api.libv.cc/miaodi` |
 | `MIAODI_MAIL_API_URL` | 喵滴邮箱验证码换 Key 地址 | `https://api.miaodiapp.com/api/newmail.php` |
-| `MIAODI_PICTURE_API_URL` | 喵滴图片上传地址 | `https://picture.miaodiapp.com/api/upload` |
+| `MIAODI_PICTURE_API_URL` | 喵滴图片上传地址（历史图片链路保留，当前不启用） | `https://picture.miaodiapp.com/api/upload` |
 | `REDIS_HOST` | Redis 主机 | `localhost` |
 | `REDIS_PORT` | Redis 端口 | `6379` |
 | `REDIS_PASSWORD` | Redis 密码 | - |
@@ -139,7 +139,6 @@ GET /api/stats
 - `get_miaodi_annual_report()`：获取喵滴年度报告链接。
 - `unbind_miaodi_key()`：解除当前喵滴绑定。
 - `save_text_note(content, title?)`：保存文本笔记。
-- `save_image_note(image_url, title?)`：保存图片到待上传队列。
 - `reset_conversation()`：清空当前会话历史。
 - `show_help()`：返回 Bot 能力说明。
 - `list_recent_notes(limit?)`：列出最近保存的笔记摘要。
@@ -172,9 +171,9 @@ GET /api/stats
 - "统计字数：这是一段文本"
 - "计算 token：这是一段文本"
 
-Bot 会通过 tool-call 自动调用合适的工具完成操作。
+Bot 会通过 LLM tool-call 自动调用合适的工具完成操作。
 
-为了兼容低参数量模型，服务会先在本地识别高置信度意图（帮助、重置、绑定 Key、邮箱验证码绑定、解绑、年度报告、查看 Key、设置路径、保存文本/图片、查询最近或指定日期记录、当前时间、基础计算、日期推算、随机数、随机选择、文本统计和 token 统计），命中后直接执行工具；未命中时再进入 LLM tool-call 流程。LLM 请求前会使用 `tiktoken-go` 根据 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 计算并裁剪旧会话历史，降低 token 溢出概率。历史消息不再按条数截断，只保留 24 小时内记录；超过 24 小时的消息由后台定时任务按北京时间清理。
+正常情况下，所有用户请求都会交给 LLM 做工具决策。只有当“system prompt + tools + 用户最新一条消息”已经超过 `OPENAI_MODEL_MAX_TOKENS` 和 `OPENAI_MAX_OUTPUT_TOKENS` 推导出的输入预算时，服务才会启用本地 `IntentRouter` 作为兜底，尝试处理帮助、重置、绑定 Key、邮箱验证码绑定、解绑、年度报告、查看 Key、设置路径、保存文本、查询最近或指定日期记录、当前时间、基础计算、日期推算、随机数、随机选择、文本统计和 token 统计等高置信度意图。LLM 请求前会使用 `tiktoken-go` 根据 token 预算裁剪旧会话历史，降低 token 溢出概率。历史消息不再按条数截断，只保留 24 小时内记录；超过 24 小时的消息由后台定时任务按北京时间清理。
 
 排查真机问题时可以临时开启应用层调试日志：
 
@@ -192,15 +191,15 @@ OPENAI_DEBUG=true
 
 开启后日志会打印模型请求 URL、请求体、错误状态码和错误响应体。上述日志可能包含用户消息内容、绑定 key 或其他敏感参数，生产环境排查完成后应关闭。
 
-## 图片处理说明
+## 历史图片表说明
 
-和 `weixin-service` 一样，图片不直接上传到喵滴，而是写入 `pending_images` 表：
+当前 Bot 不支持图片保存或上传，也不会向用户宣传“保存图片链接”。仓库中仍保留早期图片链路相关代码和 `pending_images` 表，用于兼容历史数据或未来恢复：
 
 ```sql
 SELECT * FROM pending_images WHERE status = 'pending' ORDER BY created_at ASC;
 ```
 
-你需要单独实现一个定时任务（或复用原仓库的扫描逻辑）消费该表，调用 `MiaodiClient.UpImage` 上传并把 `status` 更新为 `done`/`failed`。
+这条链路目前没有作为正式能力启用，不应依赖它保存新图片。
 
 ## 测试回调
 
